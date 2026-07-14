@@ -115,6 +115,24 @@ export interface Contact {
   tags?: Tag[];
 }
 
+
+export interface ContactDependent {
+  id: string;
+  account_id: string;
+  contact_id: string;
+  created_by_user_id?: string | null;
+
+  full_name: string;
+  relationship?: string | null;
+  birth_date?: string | null;
+
+  identifier_type?: 'ssn' | 'itin' | null;
+  identifier_last4?: string | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Tag {
   id: string;
   user_id: string;

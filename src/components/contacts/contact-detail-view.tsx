@@ -5,7 +5,17 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
+import type {
+  Contact,
+  Tag,
+  ContactTag,
+  ContactNote,
+  CustomField,
+  ContactCustomValue,
+  Deal,
+  MessageTemplate,
+  ContactDependent,
+} from '@/types';
 import {
   TemplatePicker,
   type TemplateSendValues,
@@ -48,6 +58,10 @@ interface ContactDetailViewProps {
   onUpdated: () => void;
 }
 
+const SHOW_CUSTOM_FIELDS = false;
+
+
+
 export function ContactDetailView({
   open,
   onOpenChange,
@@ -79,6 +93,10 @@ export function ContactDetailView({
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [contactTagIds, setContactTagIds] = useState<string[]>([]);
   const [savingTags, setSavingTags] = useState(false);
+
+  // Dependents tab
+  const [dependents, setDependents] = useState<ContactDependent[]>([]);
+  const [loadingDependents, setLoadingDependents] = useState(false);
 
   // Notes tab
   const [notes, setNotes] = useState<ContactNote[]>([]);
@@ -127,6 +145,34 @@ export function ContactDetailView({
     if (tagsRes.data) setAllTags(tagsRes.data);
     if (contactTagsRes.data) {
       setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
+    }
+  }, [contactId, supabase]);
+
+  const fetchDependents = useCallback(async () => {
+    if (!contactId) {
+      setDependents([]);
+      return;
+    }
+
+    setLoadingDependents(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('contact_dependents')
+        .select(
+          'id, account_id, contact_id, created_by_user_id, full_name, relationship, birth_date, identifier_type, identifier_last4, created_at, updated_at',
+        )
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      setDependents((data ?? []) as ContactDependent[]);
+    } catch (error) {
+      console.error('Error loading dependents:', error);
+      setDependents([]);
+    } finally {
+      setLoadingDependents(false);
     }
   }, [contactId, supabase]);
 
@@ -183,11 +229,21 @@ export function ContactDetailView({
     if (open && contactId) {
       fetchContact();
       fetchTags();
+      fetchDependents();
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [
+    open,
+    contactId,
+    fetchContact,
+    fetchTags,
+    fetchDependents,
+    fetchNotes,
+    fetchCustomFields,
+    fetchDeals,
+  ]);
 
   async function copyPhone() {
     if (!contact) return;
@@ -382,13 +438,33 @@ export function ContactDetailView({
       .slice(0, 2);
   }
 
+  function formatBirthDate(value?: string | null) {
+    if (!value) return 'No registrada';
+
+    const [year, month, day] = value.split('-');
+
+    if (!year || !month || !day) return value;
+
+    return `${day}/${month}/${year}`;
+  }
+
   return (
     <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        side="right"
-        className="bg-popover border-border text-popover-foreground sm:max-w-lg w-full p-0"
-      >
+  side="right"
+  className="
+    w-full
+    border-border
+    bg-popover
+    p-0
+    text-popover-foreground
+    sm:w-[680px]
+    sm:max-w-[680px]
+    lg:w-[720px]
+    lg:max-w-[720px]
+  "
+>
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="size-6 animate-spin text-primary" />
@@ -457,38 +533,50 @@ export function ContactDetailView({
 
             {/* Tabs */}
             <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3">
-                <TabsTrigger
-                  value="details"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.details')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="tags"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.tags', { fallback: 'Tags' })}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="notes"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.notes')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="custom"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.custom')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="deals"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.deals')}
-                </TabsTrigger>
-              </TabsList>
+              <TabsList className="mx-5 mt-4 grid h-auto grid-cols-[1fr_0.8fr_1.6fr_1fr_1fr] border-b border-border bg-muted/50 p-1">
+  <TabsTrigger
+    value="details"
+    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+  >
+    {t('tabs.details')}
+  </TabsTrigger>
+
+  <TabsTrigger
+    value="tags"
+    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+  >
+    {t('tabs.tags')}
+  </TabsTrigger>
+
+  <TabsTrigger
+    value="dependents"
+    className="min-w-0 px-1 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+  >
+    <span className="whitespace-nowrap">
+  Dependientes
+</span>
+
+    {dependents.length > 0 && (
+      <span className="ml-1 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+        {dependents.length}
+      </span>
+    )}
+  </TabsTrigger>
+
+  <TabsTrigger
+    value="notes"
+    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+  >
+    {t('tabs.notes')}
+  </TabsTrigger>
+
+  <TabsTrigger
+    value="deals"
+    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+  >
+    {t('tabs.deals')}
+  </TabsTrigger>
+</TabsList>
 
               {/* Details Tab */}
               <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
@@ -582,6 +670,81 @@ export function ContactDetailView({
                 </div>
               </TabsContent>
 
+              {/* Dependents Tab */}
+              <TabsContent
+                value="dependents"
+                className="flex-1 overflow-y-auto px-4 py-3"
+              >
+                {loadingDependents ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="size-5 animate-spin text-primary" />
+                  </div>
+                ) : dependents.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border p-5 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Este contacto no tiene dependientes registrados.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {dependents.map((dependent, index) => (
+                      <div
+                        key={dependent.id}
+                        className="rounded-lg border border-border bg-muted/30 p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {dependent.full_name}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              Dependiente {index + 1}
+                            </p>
+                          </div>
+
+                          <Badge variant="secondary">
+                            {dependent.relationship || 'Sin parentesco'}
+                          </Badge>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-md border border-border/60 bg-background/40 p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Fecha de nacimiento
+                            </p>
+                            <p className="mt-1 text-sm font-medium text-foreground">
+                              {formatBirthDate(dependent.birth_date)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-md border border-border/60 bg-background/40 p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Identificación
+                            </p>
+
+                            {dependent.identifier_type &&
+                            dependent.identifier_last4 ? (
+                              <div className="mt-1 flex items-center gap-2">
+                                <Badge variant="outline">
+                                  {dependent.identifier_type.toUpperCase()}
+                                </Badge>
+                                <span className="font-mono text-sm font-medium text-foreground">
+                                  •••• {dependent.identifier_last4}
+                                </span>
+                              </div>
+                            ) : (
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                No registrada
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+
               {/* Notes Tab */}
               <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
                 <div className="space-y-2 mb-3">
@@ -647,52 +810,61 @@ export function ContactDetailView({
                 </div>
               </TabsContent>
 
-              {/* Custom Fields Tab */}
-              <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingCustom ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                  </div>
-                ) : customFields.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    {t('noCustomFields')}
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {customFields.map((field) => (
-                      <div key={field.id} className="space-y-1.5">
-                        <Label className="text-muted-foreground text-xs capitalize">
-                          {field.field_name}
-                        </Label>
-                        <Input
-                          value={customValues[field.id] ?? ''}
-                          onChange={(e) =>
-                            setCustomValues((prev) => ({
-                              ...prev,
-                              [field.id]: e.target.value,
-                            }))
-                          }
-                          placeholder={t('enterCustomField', { name: field.field_name })}
-                          className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
-                        />
-                      </div>
-                    ))}
-                    <Button
-                      onClick={saveCustomFields}
-                      disabled={savingCustom}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                      size="sm"
-                    >
-                      {savingCustom ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Save className="size-3.5" />
-                      )}
-                      {t('saveCustomFieldsBtn')}
-                    </Button>
-                  </div>
-                )}
-              </TabsContent>
+              {SHOW_CUSTOM_FIELDS && (
+  <TabsContent
+    value="custom"
+    className="flex-1 overflow-y-auto px-4 py-3"
+  >
+    {loadingCustom ? (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    ) : customFields.length === 0 ? (
+      <p className="text-sm text-muted-foreground text-center py-8">
+        {t('noCustomFields')}
+      </p>
+    ) : (
+      <div className="space-y-3">
+        {customFields.map((field) => (
+          <div key={field.id} className="space-y-1.5">
+            <Label className="text-muted-foreground text-xs capitalize">
+              {field.field_name}
+            </Label>
+
+            <Input
+              value={customValues[field.id] ?? ''}
+              onChange={(e) =>
+                setCustomValues((prev) => ({
+                  ...prev,
+                  [field.id]: e.target.value,
+                }))
+              }
+              placeholder={t('enterCustomField', {
+                name: field.field_name,
+              })}
+              className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
+            />
+          </div>
+        ))}
+
+        <Button
+          onClick={saveCustomFields}
+          disabled={savingCustom}
+          className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+          size="sm"
+        >
+          {savingCustom ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Save className="size-3.5" />
+          )}
+
+          {t('saveCustomFieldsBtn')}
+        </Button>
+      </div>
+    )}
+  </TabsContent>
+)}
 
               {/* Deals Tab */}
               <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
