@@ -22,6 +22,7 @@ import {
   resolveSection,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
+import { TwilioVoiceConfig } from '@/components/settings/twilio-voice-config';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -59,6 +60,7 @@ export default function SettingsPage() {
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
     whatsapp: <WhatsAppConfig />,
+    'twilio-voice': <TwilioVoiceConfig />,
     templates: <TemplateManager />,
     'quick-replies': <QuickRepliesManager />,
     fields: <FieldsAndTagsPanel />,

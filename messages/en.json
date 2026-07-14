@@ -1,4 +1,11 @@
+
 {
+  "roles": {
+    "owner": "Owner",
+    "admin": "Administrator",
+    "agent": "Agent",
+    "viewer": "Viewer"
+  },
   "LoginPage": {
     "titleAccept": "Sign in to accept",
     "titleWelcome": "Welcome back",
@@ -1366,8 +1373,8 @@
       "documentHint": " Recommended: PDF, ≤100 MB.",
       
       "bodyText": "Body Text",
-      "bodyPlaceholder": "Hello {{1}}, your order {{2}} is confirmed.",
-      "bodyHint": "Use {{1}}, {{2}} for variables (must be contiguous starting at {{1}}).",
+      "bodyPlaceholder": "Hello '{{1}}', your order '{{2}}' is confirmed.",
+      "bodyHint": "Use '{{1}}', '{{2}}' for variables (must be contiguous starting at '{{1}}').",
       "sampleValues": "Sample values (Meta uses these to review your template)",
       "sampleAria": "Sample value for body variable {var}",
       "samplePlaceholder": "Sample for {var}",
@@ -1500,7 +1507,9 @@
       "security": "Login & security",
       "appearance": "Appearance",
       "whatsapp": "WhatsApp",
+      "twilio-voice": "Telefonía Twilio",
       "templates": "Templates",
+      "quick-replies": "Quick replies",
       "fields": "Fields & tags",
       "deals": "Deals & currency",
       "members": "Team members",
