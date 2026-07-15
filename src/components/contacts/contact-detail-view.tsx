@@ -55,6 +55,10 @@ import {
   requestTwilioDial,
 } from '@/lib/twilio/dial-request';
 
+import {
+  ContactCallHistory,
+} from '@/components/contacts/contact-call-history';
+
 interface ContactDetailViewProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -565,7 +569,7 @@ export function ContactDetailView({
 
             {/* Tabs */}
             <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="mx-5 mt-4 grid h-auto grid-cols-[1fr_0.8fr_1.6fr_1fr_1fr] border-b border-border bg-muted/50 p-1">
+              <TabsList className="mx-4 mt-3 grid h-auto grid-cols-3 gap-1 border-b border-border bg-muted/50 p-1">
   <TabsTrigger
     value="details"
     className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
@@ -601,6 +605,14 @@ export function ContactDetailView({
   >
     {t('tabs.notes')}
   </TabsTrigger>
+
+  <TabsTrigger
+  value="calls"
+  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+>
+  Llamadas
+</TabsTrigger>
+
 
   <TabsTrigger
     value="deals"
@@ -897,6 +909,15 @@ export function ContactDetailView({
     )}
   </TabsContent>
 )}
+{/* Calls Tab */}
+<TabsContent
+  value="calls"
+  className="flex-1 overflow-y-auto px-4 py-3"
+>
+  <ContactCallHistory
+    contactId={contact.id}
+  />
+</TabsContent>
 
               {/* Deals Tab */}
               <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
