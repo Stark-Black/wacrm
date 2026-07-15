@@ -46,6 +46,20 @@ type TokenResponse = {
   error?: string;
   missingVariables?: string[];
 };
+type AgentAvailability =
+  | 'offline'
+  | 'available'
+  | 'ringing'
+  | 'busy';
+
+function getCallSid(call: Call | null) {
+  if (!call) return null;
+
+  return call.parameters.CallSid ?? null;
+}
+
+
+
 
 function getCallerNumber(call: Call | null) {
   if (!call) return 'Número desconocido';
@@ -79,10 +93,13 @@ export function TwilioSoftphone() {
     useState<string | null>(null);
 
   const fetchToken = useCallback(async () => {
+    
+    
     const response = await fetch('/api/twilio/token', {
       method: 'GET',
       cache: 'no-store',
     });
+
 
     const data =
       (await response.json()) as TokenResponse;
@@ -102,29 +119,89 @@ export function TwilioSoftphone() {
 
     return data;
   }, []);
+  const updateAgentStatus = useCallback(
+  async (
+    agentStatus: AgentAvailability,
+    activeCallSid: string | null = null,
+    keepalive = false,
+  ) => {
+    const response = await fetch(
+      '/api/twilio/agent-status',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+        keepalive,
+        body: JSON.stringify({
+          status: agentStatus,
+          activeCallSid,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      throw new Error(
+        data?.error ||
+          'No se pudo actualizar el estado del asesor.',
+      );
+    }
+  },
+  [],
+);
+
+
 
   const clearCurrentCall = useCallback(() => {
-    activeCallRef.current = null;
+  activeCallRef.current = null;
 
-    setIncomingCall(null);
-    setActiveCall(null);
-    setMuted(false);
+  setIncomingCall(null);
+  setActiveCall(null);
+  setMuted(false);
 
-    setStatus(
-      deviceRef.current?.state === 'registered'
-        ? 'available'
-        : 'offline',
+  const isRegistered =
+    deviceRef.current?.state === 'registered';
+
+  const nextStatus: SoftphoneStatus =
+    isRegistered
+      ? 'available'
+      : 'offline';
+
+  setStatus(nextStatus);
+
+  void updateAgentStatus(
+    isRegistered ? 'available' : 'offline',
+  ).catch((error) => {
+    console.error(
+      'Error updating agent status:',
+      error,
     );
-  }, []);
+  });
+}, [updateAgentStatus]);
 
   const configureCallEvents = useCallback(
     (call: Call) => {
       call.on('accept', () => {
         activeCallRef.current = call;
 
-        setIncomingCall(null);
-        setActiveCall(call);
-        setStatus('in_call');
+  setIncomingCall(null);
+  setActiveCall(call);
+  setStatus('in_call');
+
+  void updateAgentStatus(
+    'busy',
+    getCallSid(call),
+  ).catch((error) => {
+    console.error(
+      'Error setting agent as busy:',
+      error,
+    );
+  });
       });
 
       call.on('disconnect', () => {
@@ -150,7 +227,7 @@ export function TwilioSoftphone() {
         clearCurrentCall();
       });
     },
-    [clearCurrentCall],
+    [clearCurrentCall, updateAgentStatus]
   );
 
   const refreshDeviceToken = useCallback(
@@ -236,17 +313,35 @@ export function TwilioSoftphone() {
       });
 
       device.on('registered', () => {
-        setStatus('available');
-        setLastError(null);
+  setStatus('available');
+  setLastError(null);
 
-        toast.success(
-          'Softphone disponible para recibir llamadas.',
-        );
-      });
+  void updateAgentStatus('available').catch(
+    (error) => {
+      console.error(
+        'Error setting agent as available:',
+        error,
+      );
+    },
+  );
+
+  toast.success(
+    'Softphone disponible para recibir llamadas.',
+  );
+});
 
       device.on('unregistered', () => {
-        setStatus('offline');
-      });
+  setStatus('offline');
+
+  void updateAgentStatus('offline').catch(
+    (error) => {
+      console.error(
+        'Error setting agent as offline:',
+        error,
+      );
+    },
+  );
+});
 
       device.on('incoming', (call) => {
         if (activeCallRef.current) {
@@ -259,6 +354,15 @@ export function TwilioSoftphone() {
         setIncomingCall(call);
         setStatus('ringing');
         setExpanded(true);
+        void updateAgentStatus(
+  'ringing',
+  getCallSid(call),
+).catch((error) => {
+  console.error(
+    'Error setting agent as ringing:',
+    error,
+  );
+});
       });
 
       device.on('tokenWillExpire', () => {
@@ -273,6 +377,16 @@ export function TwilioSoftphone() {
 
         setStatus('error');
         setLastError(error.message);
+
+
+        void updateAgentStatus('offline').catch(
+  (statusError) => {
+    console.error(
+      'Error setting agent as offline:',
+      statusError,
+    );
+  },
+);
 
         toast.error(
           `Error de telefonía: ${error.message}`,
@@ -303,6 +417,7 @@ export function TwilioSoftphone() {
 
     if (!device) {
       setStatus('offline');
+      
       return;
     }
 
@@ -329,6 +444,14 @@ export function TwilioSoftphone() {
     setIdentity(null);
     setMuted(false);
     setStatus('offline');
+    try {
+  await updateAgentStatus('offline');
+} catch (error) {
+  console.error(
+    'Error setting agent as offline:',
+    error,
+  );
+}
   }
 
   function acceptIncomingCall() {
@@ -359,6 +482,91 @@ export function TwilioSoftphone() {
     setMuted(nextMutedValue);
   }
 
+    // Envía el estado del asesor cada 30 segundos
+  // mientras está disponible, sonando o en llamada.
+  useEffect(() => {
+    let agentStatus: AgentAvailability;
+
+    switch (status) {
+      case 'available':
+        agentStatus = 'available';
+        break;
+
+      case 'ringing':
+        agentStatus = 'ringing';
+        break;
+
+      case 'in_call':
+        agentStatus = 'busy';
+        break;
+
+      default:
+        return;
+    }
+
+    const sendHeartbeat = () => {
+      void updateAgentStatus(
+        agentStatus,
+        getCallSid(activeCallRef.current),
+      ).catch((error) => {
+        console.error(
+          'Twilio agent heartbeat failed:',
+          error,
+        );
+      });
+    };
+
+    // Actualiza inmediatamente
+    sendHeartbeat();
+
+    // Después actualiza cada 30 segundos
+    const intervalId = window.setInterval(
+      sendHeartbeat,
+      30_000,
+    );
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [status, updateAgentStatus]);
+
+  // Marca al asesor como desconectado cuando
+  // cierra o abandona la página.
+  useEffect(() => {
+    function handlePageHide() {
+      const payload = new Blob(
+        [
+          JSON.stringify({
+            status: 'offline',
+            activeCallSid: null,
+          }),
+        ],
+        {
+          type: 'application/json',
+        },
+      );
+
+      navigator.sendBeacon(
+        '/api/twilio/agent-status',
+        payload,
+      );
+    }
+
+    window.addEventListener(
+      'pagehide',
+      handlePageHide,
+    );
+
+    return () => {
+      window.removeEventListener(
+        'pagehide',
+        handlePageHide,
+      );
+    };
+  }, []);
+
+  // Destruye correctamente el dispositivo Twilio
+  // cuando el componente desaparece.
   useEffect(() => {
     return () => {
       const device = deviceRef.current;
@@ -375,6 +583,12 @@ export function TwilioSoftphone() {
       activeCallRef.current = null;
     };
   }, []);
+
+
+
+
+
+  
 
   const statusLabel = {
     offline: 'Desconectado',
