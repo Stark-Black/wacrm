@@ -29,6 +29,7 @@ import {
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 type SoftphoneStatus =
   | 'offline'
@@ -46,6 +47,11 @@ type TokenResponse = {
   error?: string;
   missingVariables?: string[];
 };
+
+const US_PHONE_REGEX =
+  /^\+1[2-9]\d{2}[2-9]\d{6}$/;
+
+
 type AgentAvailability =
   | 'offline'
   | 'available'
@@ -92,7 +98,10 @@ export function TwilioSoftphone() {
   const [lastError, setLastError] =
     useState<string | null>(null);
 
+  const [phoneNumber, setPhoneNumber] = useState('');
+
   const fetchToken = useCallback(async () => {
+
     
     
     const response = await fetch('/api/twilio/token', {
@@ -454,6 +463,96 @@ export function TwilioSoftphone() {
 }
   }
 
+
+  async function startOutgoingCall() {
+  const device = deviceRef.current;
+  const normalizedPhoneNumber = phoneNumber.trim();
+
+  if (!device) {
+    toast.error(
+      'Primero debes activar el softphone.',
+    );
+    return;
+  }
+
+  if (device.state !== 'registered') {
+    toast.error(
+      'El softphone todavía no está disponible.',
+    );
+    return;
+  }
+
+  if (activeCallRef.current) {
+    toast.error(
+      'Ya tienes una llamada activa.',
+    );
+    return;
+  }
+
+  if (
+    !US_PHONE_REGEX.test(
+    normalizedPhoneNumber,
+    )
+  ) {
+    toast.error(
+      'Ingresa un número de Estados Unidos con +1. Ejemplo: +12025550123',
+    );
+    return;
+  }
+
+  try {
+    setStatus('connecting');
+    setLastError(null);
+
+    const call = await device.connect({
+      params: {
+        To: normalizedPhoneNumber,
+      },
+    });
+
+    /*
+     * Guardamos el objeto Call para poder:
+     * colgar, silenciar y escuchar sus eventos.
+     */
+    activeCallRef.current = call;
+
+    setActiveCall(call);
+    setIncomingCall(null);
+
+    configureCallEvents(call);
+
+    toast.success(
+      `Llamando a ${normalizedPhoneNumber}...`,
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'No se pudo iniciar la llamada.';
+
+    console.error(
+      'Error starting outgoing call:',
+      error,
+    );
+
+    setLastError(message);
+
+    setStatus(
+      device.state === 'registered'
+        ? 'available'
+        : 'offline',
+    );
+
+    toast.error(message);
+  }
+}
+
+
+
+
+
+
+
   function acceptIncomingCall() {
     if (!incomingCall) return;
 
@@ -792,6 +891,48 @@ export function TwilioSoftphone() {
 
                 <p className="mt-1 text-sm text-muted-foreground">
                   Actívalo para recibir llamadas en este navegador.
+                </p>
+              </div>
+            )}
+
+            {/* PEGAR ESTE BLOQUE */}
+            {status === 'available' && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <p className="text-sm font-medium">
+                  Realizar llamada
+                </p>
+
+                <Input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="+12025550123"
+                  value={phoneNumber}
+                  onChange={(event) => {
+                    setPhoneNumber(event.target.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void startOutgoingCall();
+                    }
+                  }}
+                />
+
+                <Button
+                  type="button"
+                  className="w-full"
+                  disabled={!phoneNumber.trim()}
+                  onClick={() => {
+                    void startOutgoingCall();
+                  }}
+                >
+                  <Phone className="size-4" />
+                  Llamar
+                </Button>
+
+                <p className="text-xs text-muted-foreground">
+                  Ingresa un número de Estados Unidos con +1.
+                  Ejemplo: +12025550123
                 </p>
               </div>
             )}
