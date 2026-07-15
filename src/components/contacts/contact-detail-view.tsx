@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Phone,
+  PhoneCall,
   Mail,
   Building2,
   Copy,
@@ -50,6 +51,9 @@ import {
   LayoutTemplate,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import {
+  requestTwilioDial,
+} from '@/lib/twilio/dial-request';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -251,6 +255,21 @@ export function ContactDetailView({
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
   }
+
+  function openContactInSoftphone() {
+  if (!contact?.phone?.trim()) {
+    toast.error(
+      'Este contacto no tiene un número registrado.',
+    );
+    return;
+  }
+
+  requestTwilioDial(contact.phone);
+
+  toast.success(
+    'Número cargado en el softphone.',
+  );
+}
 
   async function saveDetails() {
     if (!contactId || !editPhone.trim()) {
@@ -514,21 +533,34 @@ export function ContactDetailView({
                   </div>
                 </div>
               </div>
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  onClick={() => setTemplatePickerOpen(true)}
-                  disabled={sendingTemplate}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {sendingTemplate ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <LayoutTemplate className="size-4" />
-                  )}
-                  {t('sendTemplateBtn')}
-                </Button>
-              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+  <Button
+    type="button"
+    size="sm"
+    variant="outline"
+    onClick={openContactInSoftphone}
+  >
+    <PhoneCall className="size-4" />
+    Llamar
+  </Button>
+
+  <Button
+    size="sm"
+    onClick={() =>
+      setTemplatePickerOpen(true)
+    }
+    disabled={sendingTemplate}
+    className="bg-primary text-primary-foreground hover:bg-primary/90"
+  >
+    {sendingTemplate ? (
+      <Loader2 className="size-4 animate-spin" />
+    ) : (
+      <LayoutTemplate className="size-4" />
+    )}
+
+    {t('sendTemplateBtn')}
+  </Button>
+</div>
             </SheetHeader>
 
             {/* Tabs */}

@@ -31,6 +31,12 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
+
+import {
+  normalizeUsPhoneNumber,
+  TWILIO_DIAL_REQUEST_EVENT,
+  type TwilioDialRequestDetail,
+} from '@/lib/twilio/dial-request';
 type SoftphoneStatus =
   | 'offline'
   | 'connecting'
@@ -581,6 +587,61 @@ export function TwilioSoftphone() {
     setMuted(nextMutedValue);
   }
 
+
+    // Recibe números enviados desde Contactos
+  // u otras partes del CRM.
+  useEffect(() => {
+    function handleDialRequest(event: Event) {
+      const customEvent =
+        event as CustomEvent<TwilioDialRequestDetail>;
+
+      const receivedNumber =
+        customEvent.detail?.phoneNumber ?? '';
+
+      const normalizedNumber =
+        normalizeUsPhoneNumber(receivedNumber);
+
+      setPhoneNumber(normalizedNumber);
+      setExpanded(true);
+
+      if (!US_PHONE_REGEX.test(normalizedNumber)) {
+        toast.error(
+          'El contacto no tiene un número válido de Estados Unidos.',
+        );
+      }
+    }
+
+    window.addEventListener(
+      TWILIO_DIAL_REQUEST_EVENT,
+      handleDialRequest,
+    );
+
+    return () => {
+      window.removeEventListener(
+        TWILIO_DIAL_REQUEST_EVENT,
+        handleDialRequest,
+      );
+    };
+  }, []);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // Envía el estado del asesor cada 30 segundos
   // mientras está disponible, sonando o en llamada.
   useEffect(() => {
@@ -720,7 +781,7 @@ export function TwilioSoftphone() {
         size="icon"
         onClick={() => setExpanded(true)}
         className="
-          fixed bottom-5 right-5 z-50
+          fixed bottom-5 right-5 z-[70]
           size-14 rounded-full shadow-xl
         "
         aria-label="Abrir softphone"
@@ -734,7 +795,7 @@ export function TwilioSoftphone() {
   return (
     <div
       className="
-        fixed bottom-5 right-5 z-50
+        fixed bottom-5 right-5 z-[70]
         w-[calc(100vw-2.5rem)]
         max-w-sm
         overflow-hidden rounded-xl
