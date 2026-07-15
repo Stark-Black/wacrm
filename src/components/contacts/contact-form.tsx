@@ -595,7 +595,18 @@ async function handleSubmit(e: React.FormEvent) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-popover border-border text-popover-foreground sm:max-w-md">
+      <DialogContent
+  className="
+    max-h-[90vh]
+    w-[calc(100vw-2rem)]
+    overflow-y-auto
+    overscroll-contain
+    bg-popover
+    border-border
+    text-popover-foreground
+    sm:max-w-2xl
+  "
+>
         <DialogHeader>
           <DialogTitle className="text-popover-foreground">
             {isEdit ? t('editTitle') : t('addTitle')}
@@ -1052,7 +1063,15 @@ async function handleSubmit(e: React.FormEvent) {
             )}
           </div>
 
-          <DialogFooter className="bg-popover border-border">
+          <DialogFooter
+  className="
+    sticky bottom-0 z-10
+    -mx-6 -mb-6 mt-4
+    border-t border-border
+    bg-popover
+    px-6 py-4
+  "
+>
             <Button
               type="button"
               variant="outline"
