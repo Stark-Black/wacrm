@@ -9,25 +9,33 @@ export type TwilioDialRequestDetail = {
  * Convierte números estadounidenses a formato:
  * +12025550123
  */
-export function normalizeUsPhoneNumber(
+export function normalizeInternationalPhoneNumber(
   phoneNumber: string,
 ) {
-  const digits = phoneNumber.replace(/\D/g, '');
+  const trimmed = phoneNumber.trim();
 
-  // Ejemplo: 2025550123
-  if (digits.length === 10) {
-    return `+1${digits}`;
+  if (!trimmed) {
+    return '';
   }
 
-  // Ejemplo: 12025550123
-  if (
-    digits.length === 11 &&
-    digits.startsWith('1')
-  ) {
-    return `+${digits}`;
+  const compact = trimmed.replace(
+    /[^\d+]/g,
+    '',
+  );
+
+  if (compact.startsWith('+')) {
+    return `+${compact
+      .slice(1)
+      .replace(/\D/g, '')}`;
   }
 
-  return phoneNumber.trim();
+  if (compact.startsWith('00')) {
+    return `+${compact
+      .slice(2)
+      .replace(/\D/g, '')}`;
+  }
+
+  return compact.replace(/\D/g, '');
 }
 
 /**

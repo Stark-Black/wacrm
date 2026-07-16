@@ -33,7 +33,7 @@ import { Input } from '@/components/ui/input';
 
 
 import {
-  normalizeUsPhoneNumber,
+  normalizeInternationalPhoneNumber,
   TWILIO_DIAL_REQUEST_EVENT,
   type TwilioDialRequestDetail,
 } from '@/lib/twilio/dial-request';
@@ -54,8 +54,8 @@ type TokenResponse = {
   missingVariables?: string[];
 };
 
-const US_PHONE_REGEX =
-  /^\+1[2-9]\d{2}[2-9]\d{6}$/;
+const E164_PHONE_REGEX =
+  /^\+[1-9]\d{7,14}$/;
 
 
 type AgentAvailability =
@@ -496,7 +496,7 @@ export function TwilioSoftphone() {
   }
 
   if (
-    !US_PHONE_REGEX.test(
+    !E164_PHONE_REGEX.test(
     normalizedPhoneNumber,
     )
   ) {
@@ -599,12 +599,12 @@ export function TwilioSoftphone() {
         customEvent.detail?.phoneNumber ?? '';
 
       const normalizedNumber =
-        normalizeUsPhoneNumber(receivedNumber);
+        normalizeInternationalPhoneNumber(receivedNumber);
 
       setPhoneNumber(normalizedNumber);
       setExpanded(true);
 
-      if (!US_PHONE_REGEX.test(normalizedNumber)) {
+      if (!E164_PHONE_REGEX.test(normalizedNumber)) {
         toast.error(
           'El contacto no tiene un número válido de Estados Unidos.',
         );
