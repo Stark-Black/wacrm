@@ -462,7 +462,7 @@ export function ContactDetailView({
   }
 
   function formatBirthDate(value?: string | null) {
-    if (!value) return 'No registrada';
+    if (!value) return 'Not registered';
 
     const [year, month, day] = value.split('-');
 
@@ -568,55 +568,165 @@ export function ContactDetailView({
             </SheetHeader>
 
             {/* Tabs */}
-            <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="mx-4 mt-3 grid h-auto grid-cols-3 gap-1 border-b border-border bg-muted/50 p-1">
+<Tabs
+  defaultValue="details"
+  className="flex min-h-0 flex-1 flex-col"
+>
+  <TabsList
+  className="
+    mx-4 mt-4
+    !grid !h-auto !min-h-[112px]
+    w-[calc(100%-2rem)]
+    grid-cols-3 grid-rows-2
+    items-stretch
+    gap-2
+    rounded-xl
+    border border-border
+    bg-muted/40
+    p-2
+  "
+>
   <TabsTrigger
     value="details"
-    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+    className="
+      !h-11 min-w-0 w-full
+      rounded-lg
+      border border-transparent
+      px-2 py-2
+      text-center text-xs font-medium
+      text-muted-foreground
+      transition-colors
+      hover:bg-background/60
+      hover:text-foreground
+      data-active:border-border
+      data-active:bg-background
+      data-active:text-primary
+      data-active:shadow-sm
+    "
   >
     {t('tabs.details')}
   </TabsTrigger>
 
   <TabsTrigger
     value="tags"
-    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+    className="
+      !h-11 min-w-0 w-full
+      rounded-lg
+      border border-transparent
+      px-2 py-2
+      text-center text-xs font-medium
+      text-muted-foreground
+      transition-colors
+      hover:bg-background/60
+      hover:text-foreground
+      data-active:border-border
+      data-active:bg-background
+      data-active:text-primary
+      data-active:shadow-sm
+    "
   >
     {t('tabs.tags')}
   </TabsTrigger>
 
   <TabsTrigger
-    value="dependents"
-    className="min-w-0 px-1 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
-  >
+  value="dependents"
+  className="
+    !h-11 min-w-0 w-full
+    rounded-lg
+    border border-transparent
+    px-1 py-2
+    text-center text-[11px] font-medium
+    text-muted-foreground
+    transition-colors
+    hover:bg-background/60
+    hover:text-foreground
+    data-active:border-border
+    data-active:bg-background
+    data-active:text-primary
+    data-active:shadow-sm
+  "
+>
+  <span className="flex items-center justify-center gap-1">
     <span className="whitespace-nowrap">
-  Dependientes
-</span>
+      Dependents
+    </span>
 
     {dependents.length > 0 && (
-      <span className="ml-1 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">
+      <span
+        className="
+          shrink-0
+          rounded-full
+          bg-primary/15
+          px-1.5 py-0.5
+          text-[10px]
+          text-primary
+        "
+      >
         {dependents.length}
       </span>
     )}
-  </TabsTrigger>
+  </span>
+</TabsTrigger>
 
   <TabsTrigger
     value="notes"
-    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+    className="
+      !h-11 min-w-0 w-full
+      rounded-lg
+      border border-transparent
+      px-2 py-2
+      text-center text-xs font-medium
+      text-muted-foreground
+      transition-colors
+      hover:bg-background/60
+      hover:text-foreground
+      data-active:border-border
+      data-active:bg-background
+      data-active:text-primary
+      data-active:shadow-sm
+    "
   >
     {t('tabs.notes')}
   </TabsTrigger>
 
   <TabsTrigger
-  value="calls"
-  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
->
-  Llamadas
-</TabsTrigger>
-
+    value="calls"
+    className="
+      !h-11 min-w-0 w-full
+      rounded-lg
+      border border-transparent
+      px-2 py-2
+      text-center text-xs font-medium
+      text-muted-foreground
+      transition-colors
+      hover:bg-background/60
+      hover:text-foreground
+      data-active:border-border
+      data-active:bg-background
+      data-active:text-primary
+      data-active:shadow-sm
+    "
+  >
+    Llamadas
+  </TabsTrigger>
 
   <TabsTrigger
     value="deals"
-    className="min-w-0 px-2 text-xs data-active:bg-muted data-active:text-primary text-muted-foreground"
+    className="
+      !h-11 min-w-0 w-full
+      rounded-lg
+      border border-transparent
+      px-2 py-2
+      text-center text-xs font-medium
+      text-muted-foreground
+      transition-colors
+      hover:bg-background/60
+      hover:text-foreground
+      data-active:border-border
+      data-active:bg-background
+      data-active:text-primary
+      data-active:shadow-sm
+    "
   >
     {t('tabs.deals')}
   </TabsTrigger>
@@ -726,7 +836,7 @@ export function ContactDetailView({
                 ) : dependents.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-border p-5 text-center">
                     <p className="text-sm text-muted-foreground">
-                      Este contacto no tiene dependientes registrados.
+                      This contact has no registered dependents.
                     </p>
                   </div>
                 ) : (
@@ -742,19 +852,19 @@ export function ContactDetailView({
                               {dependent.full_name}
                             </p>
                             <p className="mt-0.5 text-xs text-muted-foreground">
-                              Dependiente {index + 1}
+                              Dependent {index + 1}
                             </p>
                           </div>
 
                           <Badge variant="secondary">
-                            {dependent.relationship || 'Sin parentesco'}
+                            {dependent.relationship || 'No relationship'}
                           </Badge>
                         </div>
 
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                           <div className="rounded-md border border-border/60 bg-background/40 p-3">
                             <p className="text-xs text-muted-foreground">
-                              Fecha de nacimiento
+                              Date of birth
                             </p>
                             <p className="mt-1 text-sm font-medium text-foreground">
                               {formatBirthDate(dependent.birth_date)}
@@ -763,7 +873,7 @@ export function ContactDetailView({
 
                           <div className="rounded-md border border-border/60 bg-background/40 p-3">
                             <p className="text-xs text-muted-foreground">
-                              Identificación
+                              Identification
                             </p>
 
                             {dependent.identifier_type &&
@@ -778,7 +888,7 @@ export function ContactDetailView({
                               </div>
                             ) : (
                               <p className="mt-1 text-sm text-muted-foreground">
-                                No registrada
+                                Not registered
                               </p>
                             )}
                           </div>

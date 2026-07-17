@@ -107,7 +107,7 @@ export function resolveVariables(
         name: contact.name,
         phone: contact.phone,
         email: contact.email,
-        company: contact.company,
+        company: contact.company ?? undefined,
       };
       return fieldMap[v.value] ?? '';
     }

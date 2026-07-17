@@ -302,7 +302,9 @@
         "email": "Email",
         "company": "Company",
         "tags": "Tags",
-        "createdAt": "Created"
+        "createdAt": "Created",
+        "details": "Details",
+        "type": "Type"
       },
       "loading": "Loading contacts...",
       "noContactsMatch": "No contacts match your filters.",

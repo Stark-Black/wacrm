@@ -3,7 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag } from '@/types';
+import type {
+  Contact,
+  ContactTag,
+  ContactType,
+  Tag,
+} from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -60,6 +65,33 @@ import { useTranslations } from 'next-intl';
 
 const PAGE_SIZE = 25;
 
+
+function resolveContactType(
+  contact: Contact,
+): 'individual' | 'company' {
+  if (contact.contact_type) {
+    return contact.contact_type;
+  }
+
+  // Compatibilidad con contactos antiguos
+  return contact.company?.trim()
+    ? 'company'
+    : 'individual';
+}
+
+function getContactDetails(
+  contact: Contact,
+) {
+  const contactType =
+    resolveContactType(contact);
+
+  if (contactType === 'company') {
+    return contact.company?.trim() || null;
+  }
+
+  return contact.profession?.trim() || null;
+}
+
 interface ContactWithTags extends Contact {
   tags?: Tag[];
 }
@@ -77,6 +109,10 @@ export default function ContactsPage() {
   const [totalCount, setTotalCount] = useState(0);
   // Tag filter — contacts shown must have ANY of these tags (OR).
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [
+  selectedContactType,
+  setSelectedContactType,
+] = useState<ContactType | 'all'>('all');
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -118,96 +154,224 @@ export default function ContactsPage() {
     }
   }, [supabase]);
 
-  const fetchContacts = useCallback(async () => {
-    const seq = ++fetchSeq.current;
-    setLoading(true);
-    // The visible rows are about to change — drop any selection that
-    // referred to the old page/search results so the bulk bar can't
-    // act on rows the user can no longer see.
-    setSelected(new Set());
+ const fetchContacts = useCallback(async () => {
+  const seq = ++fetchSeq.current;
 
-    const from = page * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-    const term = search.trim();
+  setLoading(true);
+  setSelected(new Set());
 
-    let contactRows: Contact[];
-    let count: number;
+  const from = page * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
+  const term = search.trim();
 
-    if (selectedTagIds.length > 0) {
-      // Tag filter active — resolve it server-side (join + distinct +
-      // windowed total count + pagination) so a tag covering many
-      // contacts can't silently truncate the result or overflow an IN
-      // clause. See migration 025_filter_contacts_by_tags.
-      const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
-        p_tag_ids: selectedTagIds,
-        p_search: term || null,
-        p_limit: PAGE_SIZE,
-        p_offset: from,
-      });
-      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
-      if (error) {
-        toast.error(t('toastFailedLoad'));
-        setLoading(false);
-        return;
-      }
-      const rows = (data ?? []) as { contact: Contact; total_count: number }[];
-      contactRows = rows.map((r) => r.contact);
-      count = rows.length > 0 ? Number(rows[0].total_count) : 0;
-    } else {
-      let query = supabase
-        .from('contacts')
-        .select('*', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(from, to);
+  /*
+   * Primero obtenemos los IDs de contactos que
+   * tienen cualquiera de las etiquetas seleccionadas.
+   */
+  let filteredContactIds: string[] | null = null;
 
-      if (term) {
-        const like = `%${term}%`;
-        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
-      }
+  if (selectedTagIds.length > 0) {
+    const {
+      data: tagRows,
+      error: tagFilterError,
+    } = await supabase
+      .from('contact_tags')
+      .select('contact_id')
+      .in('tag_id', selectedTagIds);
 
-      const { data, count: exactCount, error } = await query;
-      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
-      if (error) {
-        toast.error(t('toastFailedLoad'));
-        setLoading(false);
-        return;
-      }
-      contactRows = data ?? [];
-      count = exactCount ?? 0;
+    if (seq !== fetchSeq.current) {
+      return;
     }
 
-    setTotalCount(count);
+    if (tagFilterError) {
+      console.error(
+        'Error filtering contacts by tags:',
+        tagFilterError,
+      );
 
-    if (contactRows.length === 0) {
-      setContacts([]);
+      toast.error(t('toastFailedLoad'));
       setLoading(false);
       return;
     }
 
-    // Fetch tags for these contacts
-    const contactIds = contactRows.map((c) => c.id);
-    const { data: contactTags } = await supabase
-      .from('contact_tags')
-      .select('contact_id, tag_id')
-      .in('contact_id', contactIds);
-    if (seq !== fetchSeq.current) return; // superseded by a newer fetch
+    filteredContactIds = Array.from(
+      new Set(
+        (tagRows ?? []).map(
+          (row) => row.contact_id,
+        ),
+      ),
+    );
 
-    const tagsByContact: Record<string, string[]> = {};
-    contactTags?.forEach((ct) => {
-      if (!tagsByContact[ct.contact_id]) tagsByContact[ct.contact_id] = [];
-      tagsByContact[ct.contact_id].push(ct.tag_id);
+    /*
+     * No existen contactos con las etiquetas
+     * seleccionadas.
+     */
+    if (filteredContactIds.length === 0) {
+      setContacts([]);
+      setTotalCount(0);
+      setLoading(false);
+      return;
+    }
+  }
+
+  /*
+   * Consulta principal de contactos.
+   */
+  let query = supabase
+    .from('contacts')
+    .select('*', {
+      count: 'exact',
     });
 
-    const enriched: ContactWithTags[] = contactRows.map((c) => ({
-      ...c,
-      tags: (tagsByContact[c.id] ?? [])
-        .map((tid) => tagsMap[tid])
+  /*
+   * Aplicar filtro de etiquetas.
+   */
+  if (filteredContactIds) {
+    query = query.in(
+      'id',
+      filteredContactIds,
+    );
+  }
+
+  /*
+   * Aplicar filtro de Type.
+   */
+  if (selectedContactType !== 'all') {
+    query = query.eq(
+      'contact_type',
+      selectedContactType,
+    );
+  }
+
+  /*
+   * Aplicar búsqueda.
+   */
+  if (term) {
+    const like = `%${term}%`;
+
+    query = query.or(
+      [
+        `name.ilike.${like}`,
+        `phone.ilike.${like}`,
+        `email.ilike.${like}`,
+        `company.ilike.${like}`,
+        `profession.ilike.${like}`,
+        `sector.ilike.${like}`,
+      ].join(','),
+    );
+  }
+
+  /*
+   * Orden y paginación.
+   */
+  query = query
+    .order('created_at', {
+      ascending: false,
+    })
+    .range(from, to);
+
+  const {
+    data,
+    count: exactCount,
+    error,
+  } = await query;
+
+  if (seq !== fetchSeq.current) {
+    return;
+  }
+
+  if (error) {
+    console.error(
+      'Error loading contacts:',
+      error,
+    );
+
+    toast.error(t('toastFailedLoad'));
+    setLoading(false);
+    return;
+  }
+
+  const contactRows: Contact[] =
+    data ?? [];
+
+  const count = exactCount ?? 0;
+
+  setTotalCount(count);
+
+  if (contactRows.length === 0) {
+    setContacts([]);
+    setLoading(false);
+    return;
+  }
+
+  /*
+   * Obtener las etiquetas de los contactos
+   * mostrados en esta página.
+   */
+  const contactIds = contactRows.map(
+    (contact) => contact.id,
+  );
+
+  const {
+    data: contactTags,
+    error: contactTagsError,
+  } = await supabase
+    .from('contact_tags')
+    .select('contact_id, tag_id')
+    .in('contact_id', contactIds);
+
+  if (seq !== fetchSeq.current) {
+    return;
+  }
+
+  if (contactTagsError) {
+    console.error(
+      'Error loading contact tags:',
+      contactTagsError,
+    );
+  }
+
+  const tagsByContact:
+    Record<string, string[]> = {};
+
+  contactTags?.forEach((contactTag) => {
+    if (
+      !tagsByContact[
+        contactTag.contact_id
+      ]
+    ) {
+      tagsByContact[
+        contactTag.contact_id
+      ] = [];
+    }
+
+    tagsByContact[
+      contactTag.contact_id
+    ].push(contactTag.tag_id);
+  });
+
+  const enriched: ContactWithTags[] =
+    contactRows.map((contact) => ({
+      ...contact,
+
+      tags: (
+        tagsByContact[contact.id] ?? []
+      )
+        .map((tagId) => tagsMap[tagId])
         .filter(Boolean),
     }));
 
-    setContacts(enriched);
-    setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  setContacts(enriched);
+  setLoading(false);
+}, [
+  supabase,
+  page,
+  search,
+  selectedTagIds,
+  selectedContactType,
+  tagsMap,
+  t,
+]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -323,7 +487,13 @@ export default function ContactsPage() {
   const allTags = Object.values(tagsMap).sort((a, b) =>
     a.name.localeCompare(b.name)
   );
-  const hasActiveFilters = search.trim().length > 0 || selectedTagIds.length > 0;
+  const activeFilterCount =
+  selectedTagIds.length +
+  (selectedContactType === 'all' ? 0 : 1);
+
+const hasActiveFilters =
+  search.trim().length > 0 ||
+  activeFilterCount > 0;
 
   function toggleTagFilter(tagId: string) {
     setSelectedTagIds((prev) =>
@@ -334,10 +504,18 @@ export default function ContactsPage() {
     setPage(0);
   }
 
-  function clearTagFilters() {
-    setSelectedTagIds([]);
-    setPage(0);
-  }
+  function selectContactType(
+  value: ContactType | 'all',
+) {
+  setSelectedContactType(value);
+  setPage(0);
+}
+
+function clearAllFilters() {
+  setSelectedTagIds([]);
+  setSelectedContactType('all');
+  setPage(0);
+}
 
   return (
     <div className="space-y-6">
@@ -401,70 +579,211 @@ export default function ContactsPage() {
           </div>
 
           <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  variant="outline"
-                  className="border-border text-muted-foreground hover:bg-muted shrink-0"
-                />
-              }
+  <PopoverTrigger
+    render={
+      <Button
+        variant="outline"
+        className="
+          shrink-0
+          border-border
+          text-muted-foreground
+          hover:bg-muted
+        "
+      />
+    }
+  >
+    <Filter className="size-4" />
+
+    Filters
+
+    {activeFilterCount > 0 && (
+      <span
+        className="
+          ml-1 inline-flex
+          min-w-5 items-center justify-center
+          rounded-full
+          bg-primary
+          px-1.5
+          text-[10px] font-semibold
+          text-primary-foreground
+        "
+      >
+        {activeFilterCount}
+      </span>
+    )}
+  </PopoverTrigger>
+
+  <PopoverContent
+    align="start"
+    className="w-72 p-0"
+  >
+    {/* Encabezado */}
+    <div
+      className="
+        flex items-center justify-between
+        border-b border-border
+        px-4 py-3
+      "
+    >
+      <span className="text-sm font-semibold text-popover-foreground">
+        Filters
+      </span>
+
+      {activeFilterCount > 0 && (
+        <button
+          type="button"
+          onClick={clearAllFilters}
+          className="
+            text-xs text-muted-foreground
+            hover:text-foreground
+          "
+        >
+          Clear all
+        </button>
+      )}
+    </div>
+
+    {/* Type */}
+    <div className="space-y-3 border-b border-border p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Type
+      </p>
+
+      <div className="grid grid-cols-3 gap-2">
+        {(
+          [
+            {
+              value: 'all',
+              label: 'All',
+            },
+            {
+              value: 'individual',
+              label: 'Individual',
+            },
+            {
+              value: 'company',
+              label: 'Company',
+            },
+          ] as const
+        ).map((option) => {
+          const selectedType =
+            selectedContactType === option.value;
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                selectContactType(option.value);
+              }}
+              className={[
+                'rounded-lg border px-2 py-2',
+                'text-xs font-medium',
+                'transition-colors',
+                selectedType
+                  ? [
+                      'border-primary',
+                      'bg-primary/10',
+                      'text-primary',
+                    ].join(' ')
+                  : [
+                      'border-border',
+                      'text-muted-foreground',
+                      'hover:bg-muted',
+                      'hover:text-foreground',
+                    ].join(' '),
+              ].join(' ')}
             >
-              <Filter className="size-4" />
-              {t('filterByTags')}
-              {selectedTagIds.length > 0 && (
-                <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
-                  {selectedTagIds.length}
-                </span>
-              )}
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-64 p-0">
-              <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-                <span className="text-sm font-medium text-popover-foreground">
-                  {t('filterByTags')}
-                </span>
-                {selectedTagIds.length > 0 && (
-                  <button
-                    onClick={clearTagFilters}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    {t('clearAll')}
-                  </button>
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+
+    {/* Tags */}
+    <div className="p-4">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Tags
+      </p>
+
+      {allTags.length === 0 ? (
+        <p className="py-3 text-center text-sm text-muted-foreground">
+          {t('noTagsYet')}
+        </p>
+      ) : (
+        <div className="max-h-64 space-y-1 overflow-y-auto">
+          {allTags.map((tag) => (
+            <label
+              key={tag.id}
+              className="
+                flex cursor-pointer
+                items-center gap-3
+                rounded-lg
+                px-3 py-2.5
+                hover:bg-muted/60
+              "
+            >
+              <Checkbox
+                checked={selectedTagIds.includes(
+                  tag.id,
                 )}
-              </div>
-              {allTags.length === 0 ? (
-                <p className="px-3 py-4 text-sm text-muted-foreground text-center">
-                  {t('noTagsYet')}
-                </p>
-              ) : (
-                <div className="max-h-64 overflow-y-auto py-1">
-                  {allTags.map((tag) => (
-                    <label
-                      key={tag.id}
-                      className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-muted/50"
-                    >
-                      <Checkbox
-                        checked={selectedTagIds.includes(tag.id)}
-                        onCheckedChange={() => toggleTagFilter(tag.id)}
-                        aria-label={`Filter by ${tag.name}`}
-                      />
-                      <span
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: tag.color }}
-                      />
-                      <span className="text-sm text-popover-foreground truncate">
-                        {tag.name}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
+                onCheckedChange={() => {
+                  toggleTagFilter(tag.id);
+                }}
+                aria-label={`Filter by ${tag.name}`}
+              />
+
+              <span
+                className="size-2.5 shrink-0 rounded-full"
+                style={{
+                  backgroundColor: tag.color,
+                }}
+              />
+
+              <span className="truncate text-sm text-popover-foreground">
+                {tag.name}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  </PopoverContent>
+</Popover>
         </div>
 
         {/* Active tag-filter chips */}
-        {selectedTagIds.length > 0 && (
+        {activeFilterCount > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
+            {selectedContactType !== 'all' && (
+  <span
+    className="
+      inline-flex items-center gap-1
+      rounded-full
+      bg-primary/10
+      px-2 py-0.5
+      text-[11px] font-medium
+      text-primary
+    "
+  >
+    {selectedContactType === 'company'
+      ? 'Company'
+      : 'Individual'}
+
+    <button
+      type="button"
+      onClick={() => {
+        selectContactType('all');
+      }}
+      aria-label="Remove Type filter"
+      className="hover:opacity-70"
+    >
+      <X className="size-3" />
+    </button>
+  </span>
+)}
+            
             {selectedTagIds.map((id) => {
               const tag = tagsMap[id];
               if (!tag) return null;
@@ -489,7 +808,7 @@ export default function ContactsPage() {
               );
             })}
             <button
-              onClick={clearTagFilters}
+              onClick={clearAllFilters}
               className="text-xs text-muted-foreground hover:text-foreground px-1"
             >
               {t('clearAll')}
@@ -544,9 +863,9 @@ export default function ContactsPage() {
               <TableHead className="text-muted-foreground">{t('tableColumns.name')}</TableHead>
               <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.email')}</TableHead>
-              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.company')}</TableHead>
+              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.details')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.tags')}</TableHead>
-              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.createdAt')}</TableHead>
+              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.type')}</TableHead>
               <TableHead className="text-muted-foreground w-12" />
             </TableRow>
           </TableHeader>
@@ -610,7 +929,11 @@ export default function ContactsPage() {
                     {contact.email || <span className="text-muted-foreground">-</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
-                    {contact.company || <span className="text-muted-foreground">-</span>}
+                    {getContactDetails(contact) || (
+                      <span className="text-muted-foreground">
+                              -
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
                     <div className="flex flex-wrap gap-1">
@@ -637,12 +960,39 @@ export default function ContactsPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-xs hidden lg:table-cell">
-                    {new Date(contact.created_at).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
+                  <TableCell className="hidden lg:table-cell">
+                    {resolveContactType(contact) ===
+                    'company' ? (
+                      <span
+                        className="
+                          inline-flex items-center
+                          rounded-full
+                          border border-blue-500/30
+                          bg-blue-500/10
+                          px-2 py-0.5
+                          text-[11px] font-medium
+                          text-blue-600
+                          dark:text-blue-300
+                        "
+                      >
+                        Company
+                      </span>
+                    ) : (
+                      <span
+                        className="
+                          inline-flex items-center
+                          rounded-full
+                          border border-emerald-500/30
+                          bg-emerald-500/10
+                          px-2 py-0.5
+                          text-[11px] font-medium
+                          text-emerald-600
+                          dark:text-emerald-300
+                        "
+                      >
+                        Individual
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

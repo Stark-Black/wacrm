@@ -16,6 +16,7 @@ import { useAuth } from '@/hooks/use-auth';
 import type {
   Contact,
   ContactTag,
+  ContactType,
   Tag,
 } from '@/types';
 
@@ -104,7 +105,18 @@ export function ContactForm({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [company, setCompany] = useState('');
+
+  const [contactType, setContactType] =
+    useState<ContactType>('individual');
+
+  const [profession, setProfession] =
+    useState('');
+
+  const [company, setCompany] =
+    useState('');
+
+  const [sector, setSector] =
+    useState('');
 
   const [dependents, setDependents] = useState<DependentFormItem[]>([]);
   const [loadingDependents, setLoadingDependents] = useState(false);
@@ -129,7 +141,20 @@ export function ContactForm({
       setName(contact?.name ?? '');
       setPhone(contact?.phone ?? '');
       setEmail(contact?.email ?? '');
+
+      const resolvedContactType: ContactType =
+        contact?.contact_type ??
+        (
+          contact?.company?.trim()
+            ? 'company'
+            : 'individual'
+        );
+
+      setContactType(resolvedContactType);
+      setProfession(contact?.profession ?? '');
       setCompany(contact?.company ?? '');
+      setSector(contact?.sector ?? '');
+
 
       if(contact?.id){
         void fetchDependents(contact.id);
@@ -380,6 +405,16 @@ async function handleSubmit(e: React.FormEvent) {
     return;
   }
 
+  if (
+  contactType === 'company' &&
+  !company.trim()
+) {
+  toast.error(
+    'Company Name is required for company contacts.',
+  );
+  return;
+}
+
   const dependentsToSave = dependents.filter(hasDependentData);
 
   // Validar que todo dependiente agregado tenga nombre
@@ -466,16 +501,36 @@ async function handleSubmit(e: React.FormEvent) {
 
     let contactId = contact?.id;
 
+    const contactData = {
+    name: name.trim() || null,
+    phone: phone.trim(),
+    email: email.trim() || null,
+
+    contact_type: contactType,
+
+    profession:
+      contactType === 'individual'
+        ? profession.trim() || null
+        : null,
+
+    company:
+      contactType === 'company'
+        ? company.trim() || null
+        : null,
+
+    sector:
+      contactType === 'company'
+        ? sector.trim() || null
+        : null,
+  };
+
     // Editar contacto existente
     if (isEdit && contactId) {
       const { error } = await supabase
         .from('contacts')
         .update({
-          name: name.trim() || null,
-          phone: phone.trim(),
-          email: email.trim() || null,
-          company: company.trim() || null,
-          updated_at: new Date().toISOString(),
+        ...contactData,
+        updated_at: new Date().toISOString(),
         })
         .eq('id', contactId);
 
@@ -487,12 +542,9 @@ async function handleSubmit(e: React.FormEvent) {
       const { data, error } = await supabase
         .from('contacts')
         .insert({
-          user_id: user.id,
-          account_id: accountId,
-          name: name.trim() || null,
-          phone: phone.trim(),
-          email: email.trim() || null,
-          company: company.trim() || null,
+        user_id: user.id,
+        account_id: accountId,
+        ...contactData,
         })
         .select('id')
         .single();
@@ -694,18 +746,139 @@ async function handleSubmit(e: React.FormEvent) {
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="cf-company" className="text-muted-foreground">
-              {t('companyLabel')}
-            </Label>
-            <Input
-              id="cf-company"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              placeholder={t('companyPlaceholder')}
-              className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-            />
-          </div>
+
+
+
+          {/* Tipo de contacto */}
+<div className="space-y-2">
+  <Label
+    htmlFor="cf-contact-type"
+    className="text-muted-foreground"
+  >
+    Type
+  </Label>
+
+  <Select
+    value={contactType}
+    onValueChange={(value) => {
+      setContactType(
+        value as ContactType,
+      );
+    }}
+    disabled={saving}
+  >
+    <SelectTrigger
+      id="cf-contact-type"
+      className="
+        w-full
+        bg-muted
+        border-border
+        text-foreground
+      "
+    >
+      <SelectValue placeholder="Select contact type" />
+    </SelectTrigger>
+
+    <SelectContent>
+      <SelectItem value="individual">
+        Individual
+      </SelectItem>
+
+      <SelectItem value="company">
+        Company
+      </SelectItem>
+    </SelectContent>
+  </Select>
+</div>
+
+{/* Campos de Individual */}
+{contactType === 'individual' && (
+  <div className="space-y-2">
+    <Label
+      htmlFor="cf-profession"
+      className="text-muted-foreground"
+    >
+      Profession
+    </Label>
+
+    <Input
+      id="cf-profession"
+      value={profession}
+      onChange={(event) => {
+        setProfession(event.target.value);
+      }}
+      placeholder="e.g. Software Engineer"
+      className="
+        bg-muted
+        border-border
+        text-foreground
+        placeholder:text-muted-foreground
+      "
+    />
+  </div>
+)}
+
+{/* Campos de Company */}
+{contactType === 'company' && (
+  <div className="grid gap-4 sm:grid-cols-2">
+    <div className="space-y-2">
+      <Label
+        htmlFor="cf-company"
+        className="text-muted-foreground"
+      >
+        Company Name
+        <span className="ml-1 text-red-400">
+          *
+        </span>
+      </Label>
+
+      <Input
+        id="cf-company"
+        value={company}
+        onChange={(event) => {
+          setCompany(event.target.value);
+        }}
+        placeholder="e.g. A&A Business Firm Corp"
+        className="
+          bg-muted
+          border-border
+          text-foreground
+          placeholder:text-muted-foreground
+        "
+      />
+    </div>
+
+    <div className="space-y-2">
+      <Label
+        htmlFor="cf-sector"
+        className="text-muted-foreground"
+      >
+        Sector
+      </Label>
+
+      <Input
+        id="cf-sector"
+        value={sector}
+        onChange={(event) => {
+          setSector(event.target.value);
+        }}
+        placeholder="e.g. Accounting"
+        className="
+          bg-muted
+          border-border
+          text-foreground
+          placeholder:text-muted-foreground
+        "
+      />
+    </div>
+  </div>
+)}
+
+
+
+
+
+
 
 
           <div className="space-y-4 rounded-lg border border-border p-4">

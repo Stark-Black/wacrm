@@ -211,7 +211,7 @@ export function Step3Personalize({
             name: contact.name,
             phone: contact.phone,
             email: contact.email,
-            company: contact.company,
+            company: contact.company ?? undefined,
           };
           replacement = fieldMap[mapping.value] ?? placeholder;
         } else if (mapping.type === 'custom_field' && mapping.value) {

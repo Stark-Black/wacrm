@@ -1,12 +1,9 @@
 -- ============================================================
 -- 043_contact_type_profession_sector.sql
 --
--- Permite distinguir contactos tipo:
--- 1. Persona Natural
--- 2. Empresa
---
--- Persona Natural utiliza profession.
--- Empresa utiliza company y sector.
+-- Nuevos tipos de contacto:
+-- Individual -> Profession
+-- Company    -> Company Name y Sector
 -- ============================================================
 
 ALTER TABLE public.contacts
@@ -18,20 +15,21 @@ ADD COLUMN IF NOT EXISTS profession TEXT;
 ALTER TABLE public.contacts
 ADD COLUMN IF NOT EXISTS sector TEXT;
 
--- Los contactos antiguos se consideran Persona Natural
--- cuando no tienen empresa, y Empresa cuando sí tienen.
+-- Clasificar contactos existentes.
+-- Si ya tienen Company, serán Company.
+-- Los demás serán Individual.
 UPDATE public.contacts
 SET contact_type = CASE
   WHEN company IS NOT NULL
     AND BTRIM(company) <> ''
     THEN 'company'
-  ELSE 'natural_person'
+  ELSE 'individual'
 END
 WHERE contact_type IS NULL;
 
 ALTER TABLE public.contacts
 ALTER COLUMN contact_type
-SET DEFAULT 'natural_person';
+SET DEFAULT 'individual';
 
 ALTER TABLE public.contacts
 ALTER COLUMN contact_type
@@ -45,11 +43,14 @@ ALTER TABLE public.contacts
 ADD CONSTRAINT contacts_contact_type_check
 CHECK (
   contact_type IN (
-    'natural_person',
+    'individual',
     'company'
   )
 );
 
 CREATE INDEX IF NOT EXISTS
 idx_contacts_account_contact_type
-ON public.contacts(account_id, contact_type);
+ON public.contacts (
+  account_id,
+  contact_type
+);
