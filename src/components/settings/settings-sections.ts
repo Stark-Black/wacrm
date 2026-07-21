@@ -3,6 +3,7 @@ import {
   FileText,
   KeyRound,
   LayoutGrid,
+  Mail,
   Palette,
   PhoneCall,
   PlugZap,
@@ -28,6 +29,7 @@ export const SETTINGS_SECTIONS = [
   'security',
   'appearance',
   'whatsapp',
+  'email',
   'twilio-voice',
   'templates',
   'quick-replies',
@@ -55,6 +57,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   security: { id: 'security', label: 'Login & security', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
+  email: {id: 'email',label: 'Email',icon: Mail,group: 'workspace',},
   'twilio-voice': {
   id: 'twilio-voice',
   label: 'Telefonía Twilio',
