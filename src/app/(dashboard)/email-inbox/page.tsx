@@ -1,45 +1,474 @@
+'use client';
+
 import Link from 'next/link';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   Archive,
   FileText,
   Inbox,
+  Loader2,
   Mail,
+  MailOpen,
+  Paperclip,
+  RefreshCw,
   Search,
   Send,
   Settings,
 } from 'lucide-react';
 
-const folders = [
-  {
-    name: 'Inbox',
-    icon: Inbox,
-    count: 0,
-    active: true,
-  },
-  {
-    name: 'Sent',
-    icon: Send,
-    count: 0,
-    active: false,
-  },
-  {
-    name: 'Drafts',
-    icon: FileText,
-    count: 0,
-    active: false,
-  },
-  {
-    name: 'Archived',
-    icon: Archive,
-    count: 0,
-    active: false,
-  },
-];
+interface EmailMessage {
+  id: string;
+  subject: string;
+  fromName: string;
+  fromAddress: string;
+  receivedDateTime: string | null;
+  isRead: boolean;
+  hasAttachments: boolean;
+  preview: string;
+}
+
+interface EmailMessagesResponse {
+  messages: EmailMessage[];
+  count: number;
+  synchronizedAt: string;
+  hasMore: boolean;
+  error?: string;
+}
+interface EmailRecipient {
+  name: string;
+  address: string;
+}
+
+interface EmailMessageDetail
+  extends EmailMessage {
+  toRecipients: EmailRecipient[];
+  ccRecipients: EmailRecipient[];
+  sentDateTime: string | null;
+  body: string;
+}
+
+interface EmailMessageDetailResponse {
+  message?: EmailMessageDetail;
+  error?: string;
+}
+
+function formatEmailDate(
+  value: string | null,
+): string {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const today = new Date();
+
+  const sameDay =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate();
+
+  if (sameDay) {
+    return new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  }
+
+  const sameYear =
+    date.getFullYear() === today.getFullYear();
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear
+      ? {}
+      : {
+          year: 'numeric',
+        }),
+  }).format(date);
+}
+
+function formatFullDate(
+  value: string | null,
+): string {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+}
+function formatRecipients(
+  recipients: EmailRecipient[],
+): string {
+  return recipients
+    .map((recipient) => {
+      if (
+        recipient.name &&
+        recipient.address &&
+        recipient.name !==
+          recipient.address
+      ) {
+        return `${recipient.name} <${recipient.address}>`;
+      }
+
+      return (
+        recipient.address ||
+        recipient.name
+      );
+    })
+    .filter(Boolean)
+    .join(', ');
+}
 
 export default function EmailInboxPage() {
+  const [messages, setMessages] =
+    useState<EmailMessage[]>([]);
+
+  const [selectedMessageId, setSelectedMessageId] =
+    useState<string | null>(null);
+
+
+  const [
+  selectedMessageDetail,
+  setSelectedMessageDetail,
+] =
+  useState<EmailMessageDetail | null>(
+    null,
+  );
+
+const [
+  loadingMessage,
+  setLoadingMessage,
+] = useState(false);
+
+const [
+  messageError,
+  setMessageError,
+] =
+  useState<string | null>(null);
+
+  
+
+
+
+
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] =
+    useState(false);
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  const [synchronizedAt, setSynchronizedAt] =
+    useState<string | null>(null);
+
+  const [hasMore, setHasMore] =
+    useState(false);
+
+  const loadMessages = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      setError(null);
+
+      try {
+        const response = await fetch(
+          '/api/email/messages',
+          {
+            method: 'GET',
+            cache: 'no-store',
+          },
+        );
+
+        const payload =
+          (await response.json()) as
+            EmailMessagesResponse;
+
+        if (!response.ok) {
+          throw new Error(
+            payload.error ||
+              'Could not load the Microsoft Inbox.',
+          );
+        }
+
+        const nextMessages =
+          Array.isArray(payload.messages)
+            ? payload.messages
+            : [];
+
+        setMessages(nextMessages);
+
+        setSynchronizedAt(
+          payload.synchronizedAt ?? null,
+        );
+
+        setHasMore(
+          Boolean(payload.hasMore),
+        );
+
+        setSelectedMessageId(
+          (currentId) => {
+            const currentStillExists =
+              nextMessages.some(
+                (message) =>
+                  message.id === currentId,
+              );
+
+            if (currentStillExists) {
+              return currentId;
+            }
+
+            return null;
+          },
+        );
+      } catch (loadError) {
+        console.error(
+          'Failed to load emails:',
+          loadError,
+        );
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Could not load emails.',
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void loadMessages();
+  }, [loadMessages]);
+
+
+  useEffect(() => {
+  if (!selectedMessageId) {
+    setSelectedMessageDetail(null);
+    setMessageError(null);
+    return;
+  }
+
+  const controller =
+    new AbortController();
+
+  async function loadMessageDetail() {
+    setLoadingMessage(true);
+    setMessageError(null);
+    setSelectedMessageDetail(null);
+
+    try {
+      const response = await fetch(
+        `/api/email/message?id=${encodeURIComponent(
+          selectedMessageId!,
+        )}`,
+        {
+          method: 'GET',
+          cache: 'no-store',
+          signal: controller.signal,
+        },
+      );
+
+      const payload =
+        (await response.json()) as
+          EmailMessageDetailResponse;
+
+      if (!response.ok || !payload.message) {
+        throw new Error(
+          payload.error ||
+            'Could not load the selected email.',
+        );
+      }
+
+      setSelectedMessageDetail(
+        payload.message,
+      );
+
+      if (!payload.message.isRead) {
+        const readResponse =
+          await fetch(
+            '/api/email/message',
+            {
+              method: 'PATCH',
+
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+
+              body: JSON.stringify({
+                id:
+                  payload.message.id,
+
+                isRead: true,
+              }),
+
+              signal:
+                controller.signal,
+            },
+          );
+
+        if (readResponse.ok) {
+          setMessages(
+            (currentMessages) =>
+              currentMessages.map(
+                (message) =>
+                  message.id ===
+                  payload.message?.id
+                    ? {
+                        ...message,
+                        isRead: true,
+                      }
+                    : message,
+              ),
+          );
+
+          setSelectedMessageDetail(
+            (currentMessage) =>
+              currentMessage
+                ? {
+                    ...currentMessage,
+                    isRead: true,
+                  }
+                : currentMessage,
+          );
+        } else {
+          console.error(
+            'The email was loaded but could not be marked as read.',
+          );
+        }
+      }
+    } catch (detailError) {
+      if (
+        detailError instanceof Error &&
+        detailError.name ===
+          'AbortError'
+      ) {
+        return;
+      }
+
+      console.error(
+        'Failed to load the selected email:',
+        detailError,
+      );
+
+      setMessageError(
+        detailError instanceof Error
+          ? detailError.message
+          : 'Could not load the selected email.',
+      );
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoadingMessage(false);
+      }
+    }
+  }
+
+  void loadMessageDetail();
+
+  return () => {
+    controller.abort();
+  };
+}, [selectedMessageId]);
+
+
+
+
+
+  const filteredMessages =
+    useMemo(() => {
+      const normalizedSearch =
+        search.trim().toLowerCase();
+
+      if (!normalizedSearch) {
+        return messages;
+      }
+
+      return messages.filter(
+        (message) => {
+          const searchableText = [
+            message.subject,
+            message.fromName,
+            message.fromAddress,
+            message.preview,
+          ]
+            .join(' ')
+            .toLowerCase();
+
+          return searchableText.includes(
+            normalizedSearch,
+          );
+        },
+      );
+    }, [messages, search]);
+
+  const selectedMessage =
+    messages.find(
+      (message) =>
+        message.id === selectedMessageId,
+    ) ?? null;
+
+  const unreadCount =
+    messages.filter(
+      (message) => !message.isRead,
+    ).length;
+
+  const folders = [
+    {
+      name: 'Inbox',
+      icon: Inbox,
+      count: unreadCount,
+      active: true,
+    },
+    {
+      name: 'Sent',
+      icon: Send,
+      count: 0,
+      active: false,
+    },
+    {
+      name: 'Drafts',
+      icon: FileText,
+      count: 0,
+      active: false,
+    },
+    {
+      name: 'Archived',
+      icon: Archive,
+      count: 0,
+      active: false,
+    },
+  ];
+
   return (
     <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-5">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -51,35 +480,62 @@ export default function EmailInboxPage() {
           </div>
 
           <p className="mt-1 text-sm text-muted-foreground">
-            View and manage your company email from the CRM.
+            View and manage the company Microsoft
+            365 mailbox.
           </p>
         </div>
 
-        <Link
-          href="/settings"
-          className="
-            inline-flex h-9 items-center justify-center gap-2
-            rounded-md border border-border
-            bg-background px-4
-            text-sm font-medium text-foreground
-            transition-colors
-            hover:bg-muted
-          "
-        >
-          <Settings className="size-4" />
-          Email Settings
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              void loadMessages(true)
+            }
+            disabled={refreshing}
+            className="
+              inline-flex h-9 items-center justify-center gap-2
+              rounded-md border border-border
+              bg-background px-4
+              text-sm font-medium text-foreground
+              transition-colors
+              hover:bg-muted
+              disabled:cursor-not-allowed
+              disabled:opacity-50
+            "
+          >
+            {refreshing ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+
+            Refresh
+          </button>
+
+          <Link
+            href="/settings?tab=email"
+            className="
+              inline-flex h-9 items-center justify-center gap-2
+              rounded-md border border-border
+              bg-background px-4
+              text-sm font-medium text-foreground
+              transition-colors
+              hover:bg-muted
+            "
+          >
+            <Settings className="size-4" />
+            Email Settings
+          </Link>
+        </div>
       </div>
 
-      {/* Inbox layout */}
       <div
         className="
           grid min-h-[650px] flex-1 overflow-hidden
           rounded-xl border border-border bg-card
-          lg:grid-cols-[210px_340px_minmax(0,1fr)]
+          lg:grid-cols-[210px_360px_minmax(0,1fr)]
         "
       >
-        {/* Folders */}
         <aside className="border-b border-border p-3 lg:border-r lg:border-b-0">
           <p className="px-3 pb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             Mailbox
@@ -93,6 +549,7 @@ export default function EmailInboxPage() {
                 <button
                   key={folder.name}
                   type="button"
+                  disabled={!folder.active}
                   className={`
                     flex w-full items-center gap-3
                     rounded-lg px-3 py-2
@@ -100,8 +557,8 @@ export default function EmailInboxPage() {
                     transition-colors
                     ${
                       folder.active
-                        ? 'bg-primary-soft text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        ? 'bg-primary/10 text-primary'
+                        : 'cursor-not-allowed text-muted-foreground opacity-60'
                     }
                   `}
                 >
@@ -111,29 +568,39 @@ export default function EmailInboxPage() {
                     {folder.name}
                   </span>
 
-                  {folder.count > 0 && (
-                    <span className="text-xs">
+                  {folder.count > 0 ? (
+                    <span
+                      className="
+                        min-w-5 rounded-full
+                        bg-primary px-1.5 py-0.5
+                        text-center text-[10px]
+                        font-semibold text-primary-foreground
+                      "
+                    >
                       {folder.count}
                     </span>
-                  )}
+                  ) : null}
                 </button>
               );
             })}
           </nav>
 
-          <div className="mt-6 rounded-lg border border-dashed border-border p-3">
+          <div className="mt-6 rounded-lg border border-border bg-muted/20 p-3">
             <p className="text-sm font-medium text-foreground">
-              Mailbox not connected
+              Microsoft 365 connected
             </p>
 
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Connect the company Microsoft 365 mailbox from Settings.
+              {synchronizedAt
+                ? `Last synchronized ${formatFullDate(
+                    synchronizedAt,
+                  )}.`
+                : 'Waiting for synchronization.'}
             </p>
           </div>
         </aside>
 
-        {/* Message list */}
-        <section className="border-b border-border lg:border-r lg:border-b-0">
+        <section className="min-w-0 border-b border-border lg:border-r lg:border-b-0">
           <div className="border-b border-border p-3">
             <div className="relative">
               <Search
@@ -148,69 +615,370 @@ export default function EmailInboxPage() {
               <input
                 type="search"
                 placeholder="Search emails..."
-                disabled
+                value={search}
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
                 className="
                   h-9 w-full rounded-md
                   border border-border
-                  bg-muted/50
+                  bg-background
                   pr-3 pl-9
                   text-sm text-foreground
                   outline-none
                   placeholder:text-muted-foreground
-                  disabled:cursor-not-allowed
-                  disabled:opacity-70
+                  focus:border-primary
+                  focus:ring-2
+                  focus:ring-primary/20
                 "
               />
             </div>
+
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                {filteredMessages.length}{' '}
+                {filteredMessages.length === 1
+                  ? 'email'
+                  : 'emails'}
+              </p>
+
+              {hasMore ? (
+                <p className="text-xs text-muted-foreground">
+                  Showing the latest 25
+                </p>
+              ) : null}
+            </div>
           </div>
 
-          <div className="flex min-h-[400px] items-center justify-center p-6">
-            <div className="max-w-[260px] text-center">
-              <div
-                className="
-                  mx-auto flex size-12
-                  items-center justify-center
-                  rounded-full bg-primary-soft
-                "
-              >
-                <Inbox className="size-5 text-primary" />
+          <div className="max-h-[590px] overflow-y-auto">
+            {loading ? (
+              <div className="flex min-h-[400px] items-center justify-center">
+                <div className="text-center">
+                  <Loader2 className="mx-auto size-6 animate-spin text-primary" />
+
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Loading Microsoft Inbox...
+                  </p>
+                </div>
               </div>
+            ) : error ? (
+              <div className="flex min-h-[400px] items-center justify-center p-6">
+                <div className="max-w-xs text-center">
+                  <Mail className="mx-auto size-8 text-muted-foreground" />
 
-              <h2 className="mt-4 text-sm font-semibold text-foreground">
-                No emails yet
-              </h2>
+                  <p className="mt-3 text-sm font-medium text-foreground">
+                    Could not load emails
+                  </p>
 
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Emails will appear here after connecting the company mailbox.
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {error}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void loadMessages()
+                    }
+                    className="
+                      mt-4 inline-flex h-9 items-center
+                      justify-center gap-2 rounded-md
+                      bg-primary px-4 text-sm
+                      font-medium text-primary-foreground
+                      hover:bg-primary/90
+                    "
+                  >
+                    <RefreshCw className="size-4" />
+                    Try again
+                  </button>
+                </div>
+              </div>
+            ) : filteredMessages.length === 0 ? (
+              <div className="flex min-h-[400px] items-center justify-center p-6">
+                <div className="max-w-[260px] text-center">
+                  <Inbox className="mx-auto size-8 text-muted-foreground" />
+
+                  <h2 className="mt-4 text-sm font-semibold text-foreground">
+                    No emails found
+                  </h2>
+
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    Try another search or refresh the
+                    Microsoft Inbox.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              filteredMessages.map(
+                (message) => {
+                  const selected =
+                    message.id ===
+                    selectedMessageId;
+
+                  return (
+                    <button
+                      key={message.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedMessageId(
+                          message.id,
+                        )
+                      }
+                      className={`
+                        block w-full border-b
+                        border-border p-4 text-left
+                        transition-colors
+                        ${
+                          selected
+                            ? 'bg-primary/10'
+                            : 'hover:bg-muted/40'
+                        }
+                      `}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={`
+                            mt-0.5 flex size-8 shrink-0
+                            items-center justify-center
+                            rounded-full
+                            ${
+                              message.isRead
+                                ? 'bg-muted text-muted-foreground'
+                                : 'bg-primary/10 text-primary'
+                            }
+                          `}
+                        >
+                          {message.isRead ? (
+                            <MailOpen className="size-4" />
+                          ) : (
+                            <Mail className="size-4" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p
+                              className={`
+                                truncate text-sm
+                                ${
+                                  message.isRead
+                                    ? 'font-medium text-foreground'
+                                    : 'font-bold text-foreground'
+                                }
+                              `}
+                            >
+                              {message.fromName}
+                            </p>
+
+                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                              {formatEmailDate(
+                                message.receivedDateTime,
+                              )}
+                            </span>
+                          </div>
+
+                          <div className="mt-1 flex items-center gap-2">
+                            <p
+                              className={`
+                                min-w-0 flex-1 truncate text-sm
+                                ${
+                                  message.isRead
+                                    ? 'text-muted-foreground'
+                                    : 'font-semibold text-foreground'
+                                }
+                              `}
+                            >
+                              {message.subject}
+                            </p>
+
+                            {message.hasAttachments ? (
+                              <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
+                            ) : null}
+                          </div>
+
+                          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                            {message.preview ||
+                              'No preview available.'}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                },
+              )
+            )}
+          </div>
+        </section>
+
+        <section className="hidden min-w-0 lg:flex lg:flex-col">
+  {selectedMessage ? (
+    <>
+      <div className="border-b border-border p-6">
+        <div className="flex items-start gap-4">
+          <div
+            className="
+              flex size-10 shrink-0
+              items-center justify-center
+              rounded-full bg-primary/10
+              text-primary
+            "
+          >
+            <Mail className="size-5" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold text-foreground">
+              {selectedMessage.subject}
+            </h2>
+
+            <div className="mt-3 flex flex-col gap-1 text-sm">
+              <p className="font-medium text-foreground">
+                {selectedMessage.fromName}
+              </p>
+
+              <p className="text-muted-foreground">
+                {selectedMessage.fromAddress}
+              </p>
+
+              <p className="text-xs text-muted-foreground">
+                {formatFullDate(
+                  selectedMessage.receivedDateTime,
+                )}
               </p>
             </div>
           </div>
-        </section>
 
-        {/* Selected email */}
-        <section className="hidden min-w-0 lg:flex lg:items-center lg:justify-center">
-          <div className="max-w-sm px-8 text-center">
+          {selectedMessage.hasAttachments ? (
             <div
               className="
-                mx-auto flex size-14
-                items-center justify-center
-                rounded-full border border-border
-                bg-muted/40
+                inline-flex items-center gap-1.5
+                rounded-md border border-border
+                px-2.5 py-1 text-xs
+                text-muted-foreground
               "
             >
-              <Mail className="size-6 text-muted-foreground" />
+              <Paperclip className="size-3.5" />
+              Attachment
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6">
+        {loadingMessage ? (
+          <div className="flex min-h-[300px] items-center justify-center">
+            <div className="text-center">
+              <Loader2 className="mx-auto size-6 animate-spin text-primary" />
+
+              <p className="mt-3 text-sm text-muted-foreground">
+                Loading complete email...
+              </p>
+            </div>
+          </div>
+        ) : messageError ? (
+          <div className="flex min-h-[300px] items-center justify-center">
+            <div className="max-w-sm text-center">
+              <Mail className="mx-auto size-8 text-muted-foreground" />
+
+              <p className="mt-3 text-sm font-medium text-foreground">
+                Could not load this email
+              </p>
+
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {messageError}
+              </p>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const currentId =
+                    selectedMessageId;
+
+                  setSelectedMessageId(null);
+
+                  window.setTimeout(() => {
+                    setSelectedMessageId(
+                      currentId,
+                    );
+                  }, 0);
+                }}
+                className="
+                  mt-4 inline-flex h-9
+                  items-center justify-center
+                  gap-2 rounded-md bg-primary
+                  px-4 text-sm font-medium
+                  text-primary-foreground
+                  hover:bg-primary/90
+                "
+              >
+                <RefreshCw className="size-4" />
+                Try again
+              </button>
+            </div>
+          </div>
+        ) : selectedMessageDetail ? (
+          <div className="max-w-4xl">
+            <div className="mb-6 space-y-2 rounded-lg border border-border bg-muted/20 p-4">
+              <div className="grid gap-1 text-sm sm:grid-cols-[50px_minmax(0,1fr)]">
+                <span className="font-medium text-muted-foreground">
+                  To:
+                </span>
+
+                <span className="break-words text-foreground">
+                  {formatRecipients(
+                    selectedMessageDetail.toRecipients,
+                  ) || 'No recipient information'}
+                </span>
+              </div>
+
+              {selectedMessageDetail
+                .ccRecipients.length > 0 ? (
+                <div className="grid gap-1 text-sm sm:grid-cols-[50px_minmax(0,1fr)]">
+                  <span className="font-medium text-muted-foreground">
+                    Cc:
+                  </span>
+
+                  <span className="break-words text-foreground">
+                    {formatRecipients(
+                      selectedMessageDetail.ccRecipients,
+                    )}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
-            <h2 className="mt-4 text-base font-semibold text-foreground">
-              Select an email
-            </h2>
-
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Choose a message from the inbox to read, reply, forward or view
-              its attachments.
-            </p>
+            <div
+              className="
+                whitespace-pre-wrap
+                break-words
+                text-sm leading-7
+                text-foreground
+              "
+            >
+              {selectedMessageDetail.body ||
+                selectedMessage.preview ||
+                'No message content is available.'}
+            </div>
           </div>
-        </section>
+        ) : null}
+      </div>
+    </>
+  ) : (
+    <div className="flex flex-1 items-center justify-center">
+      <div className="max-w-sm px-8 text-center">
+        <Mail className="mx-auto size-8 text-muted-foreground" />
+
+        <h2 className="mt-4 text-base font-semibold text-foreground">
+          Select an email
+        </h2>
+
+        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+          Choose a message from the Inbox to
+          read its complete content.
+        </p>
+      </div>
+    </div>
+  )}
+</section>
       </div>
     </div>
   );

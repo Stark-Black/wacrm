@@ -208,6 +208,95 @@ export function EmailConfig() {
     loadConfiguration,
   ]);
 
+
+
+  useEffect(() => {
+  const currentUrl =
+    new URL(window.location.href);
+
+  const connected =
+    currentUrl.searchParams.get(
+      'email_connected',
+    );
+
+  const errorCode =
+    currentUrl.searchParams.get(
+      'email_error',
+    );
+
+  if (connected === '1') {
+    toast.success(
+      'Microsoft 365 mailbox connected successfully.',
+    );
+  }
+
+  if (errorCode) {
+    const errorMessages:
+      Record<string, string> = {
+        unauthorized:
+          'Your CRM session has expired.',
+
+        missing_account:
+          'Your CRM profile is not linked to an account.',
+
+        forbidden:
+          'Only owners and administrators can connect Microsoft 365.',
+
+        save_mailbox_first:
+          'Save the company mailbox before connecting Microsoft 365.',
+
+        invalid_state:
+          'The Microsoft connection request expired or was invalid.',
+
+        oauth_denied:
+          'Microsoft authorization was cancelled or denied.',
+
+        token_exchange_failed:
+          'Microsoft did not return a valid access token.',
+
+        graph_failed:
+          'The CRM could not read the Microsoft account.',
+
+        mailbox_mismatch:
+          'Sign in with the same Microsoft mailbox configured in the CRM.',
+
+        database_failed:
+          'The Microsoft credentials could not be saved securely.',
+
+        connect_failed:
+          'The Microsoft connection could not be started.',
+
+        callback_failed:
+          'The Microsoft connection could not be completed.',
+      };
+
+    toast.error(
+      errorMessages[errorCode] ??
+        'Microsoft 365 connection failed.',
+    );
+  }
+
+  if (connected || errorCode) {
+    currentUrl.searchParams.delete(
+      'email_connected',
+    );
+
+    currentUrl.searchParams.delete(
+      'email_error',
+    );
+
+    window.history.replaceState(
+      {},
+      '',
+      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+    );
+  }
+}, []);
+
+
+
+
+
   async function handleSave() {
     if (!canEditSettings) {
       toast.error(
@@ -597,17 +686,29 @@ export function EmailConfig() {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled
+                  onClick={() => {
+                    window.location.assign(
+                      '/api/email/microsoft/connect',
+                    );
+                  }}
+                  disabled={
+                    !canEditSettings ||
+                    saving ||
+                    !connection
+                  }
                 >
                   <Mail className="size-4" />
-                  Connect Microsoft 365
+
+                  {isConnected
+                    ? 'Reconnect Microsoft 365'
+                    : 'Connect Microsoft 365'}
                 </Button>
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Microsoft authorization will be enabled in
-                the next development step. Saving this form
-                does not connect or access the mailbox yet.
+                Click Connect Microsoft 365 and sign in with
+                the same mailbox configured above. Microsoft
+                will return you to the CRM automatically.
               </p>
             </CardContent>
           </Card>

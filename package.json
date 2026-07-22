@@ -39,6 +39,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@azure/msal-node": "^5.4.1",
     "@base-ui/react": "^1.6.0",
     "@dagrejs/dagre": "^3.0.0",
     "@dnd-kit/core": "^6.3.1",
