@@ -9,6 +9,7 @@ import {
 } from 'react';
 import {
   Archive,
+  Download,
   FileText,
   Inbox,
   Loader2,
@@ -56,12 +57,29 @@ interface EmailRecipient {
   address: string;
 }
 
+interface EmailAttachment {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  isInline: boolean;
+
+  attachmentType:
+    | 'file'
+    | 'item'
+    | 'reference'
+    | 'unknown';
+
+  downloadable: boolean;
+}
+
 interface EmailMessageDetail
   extends EmailMessage {
   toRecipients: EmailRecipient[];
   ccRecipients: EmailRecipient[];
   sentDateTime: string | null;
   body: string;
+  attachments: EmailAttachment[];
 }
 
 interface EmailMessageDetailResponse {
@@ -160,7 +178,43 @@ function splitEmailAddresses(
     )
     .filter(Boolean);
 }
+function formatFileSize(
+  bytes: number,
+): string {
+  if (
+    !Number.isFinite(bytes) ||
+    bytes <= 0
+  ) {
+    return 'Unknown size';
+  }
 
+  const units = [
+    'B',
+    'KB',
+    'MB',
+    'GB',
+  ];
+
+  const unitIndex =
+    Math.min(
+      Math.floor(
+        Math.log(bytes) /
+          Math.log(1024),
+      ),
+      units.length - 1,
+    );
+
+  const value =
+    bytes /
+    1024 ** unitIndex;
+
+  return `${value.toFixed(
+    unitIndex === 0 ||
+      value >= 10
+      ? 0
+      : 1,
+  )} ${units[unitIndex]}`;
+}
 
 
 
@@ -1606,11 +1660,124 @@ async function handleSendMessage() {
               ) : null}
             </div>
 
+            {selectedMessageDetail
+  .attachments.length > 0 ? (
+  <div className="mb-6">
+    <div className="mb-3 flex items-center gap-2">
+      <Paperclip className="size-4 text-muted-foreground" />
 
+      <h3 className="text-sm font-semibold text-foreground">
+        Attachments
+      </h3>
 
+      <span className="text-xs text-muted-foreground">
+        (
+        {
+          selectedMessageDetail
+            .attachments.length
+        }
+        )
+      </span>
+    </div>
 
+    <div className="grid gap-2">
+      {selectedMessageDetail
+        .attachments.map(
+          (attachment) => (
+            <div
+              key={attachment.id}
+              className="
+                flex flex-wrap items-center
+                justify-between gap-3
+                rounded-lg border
+                border-border
+                bg-muted/20 p-3
+              "
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div
+                  className="
+                    flex size-9 shrink-0
+                    items-center justify-center
+                    rounded-md bg-primary/10
+                    text-primary
+                  "
+                >
+                  <Paperclip className="size-4" />
+                </div>
 
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {attachment.name}
+                  </p>
 
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {formatFileSize(
+                      attachment.size,
+                    )}
+
+                    {attachment.contentType
+                      ? ` · ${attachment.contentType}`
+                      : ''}
+                  </p>
+                </div>
+              </div>
+
+              {attachment.downloadable ? (
+                <a
+                  href={`/api/email/attachment?messageId=${encodeURIComponent(
+                    selectedMessageDetail.id,
+                  )}&attachmentId=${encodeURIComponent(
+                    attachment.id,
+                  )}`}
+                  download={attachment.name}
+                  className="
+                    inline-flex h-9
+                    shrink-0 items-center
+                    justify-center gap-2
+                    rounded-md border
+                    border-border
+                    bg-background px-3
+                    text-sm font-medium
+                    text-foreground
+                    transition-colors
+                    hover:bg-muted
+                  "
+                >
+                  <Download className="size-4" />
+                  Download
+                </a>
+              ) : (
+                <span
+                  className="
+                    rounded-md border
+                    border-border px-3
+                    py-2 text-xs
+                    text-muted-foreground
+                  "
+                >
+                  Download unavailable
+                </span>
+              )}
+            </div>
+          ),
+        )}
+    </div>
+  </div>
+) : selectedMessageDetail
+    .hasAttachments ? (
+  <div
+    className="
+      mb-6 rounded-lg
+      border border-border
+      bg-muted/20 p-4
+      text-sm text-muted-foreground
+    "
+  >
+    This email contains attachments, but no
+    downloadable files were found.
+  </div>
+) : null}
 
 
             {activeFolder === 'inbox' &&

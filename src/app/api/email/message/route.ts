@@ -46,6 +46,22 @@ interface GraphMessage {
   body?: GraphMessageBody | null;
 }
 
+
+interface GraphAttachment {
+  id: string;
+  name?: string | null;
+  contentType?: string | null;
+  size?: number | null;
+  isInline?: boolean | null;
+  '@odata.type'?: string;
+}
+
+interface GraphAttachmentsResponse {
+  value?: GraphAttachment[];
+}
+
+
+
 interface UpdateMessageBody {
   id?: string;
   isRead?: boolean;
@@ -230,9 +246,136 @@ export async function GET(
         GraphMessage;
 
     const sender =
-      graphMessage.from?.emailAddress;
+  graphMessage.from?.emailAddress;
 
-    return NextResponse.json({
+let attachments: Array<{
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  isInline: boolean;
+  attachmentType:
+    | 'file'
+    | 'item'
+    | 'reference'
+    | 'unknown';
+  downloadable: boolean;
+}> = [];
+
+if (graphMessage.hasAttachments) {
+  const attachmentsUrl = new URL(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(
+      messageId,
+    )}/attachments`,
+  );
+
+  attachmentsUrl.searchParams.set(
+    '$select',
+    [
+      'id',
+      'name',
+      'contentType',
+      'size',
+      'isInline',
+    ].join(','),
+  );
+
+  const attachmentsResponse =
+    await fetch(attachmentsUrl, {
+      method: 'GET',
+
+      headers: {
+        Authorization:
+          `Bearer ${accessToken}`,
+
+        Accept:
+          'application/json',
+      },
+
+      cache: 'no-store',
+    });
+
+  if (attachmentsResponse.ok) {
+    const attachmentsData =
+      (await attachmentsResponse.json()) as
+        GraphAttachmentsResponse;
+
+    attachments =
+      (attachmentsData.value ?? [])
+        /*
+         * Inline images are normally logos or images
+         * embedded inside the email body.
+         */
+        .filter(
+          (attachment) =>
+            !attachment.isInline,
+        )
+        .map((attachment) => {
+          const graphType =
+            attachment['@odata.type'] ?? '';
+
+          const attachmentType =
+            graphType.includes(
+              'fileAttachment',
+            )
+              ? 'file'
+              : graphType.includes(
+                    'itemAttachment',
+                  )
+                ? 'item'
+                : graphType.includes(
+                      'referenceAttachment',
+                    )
+                  ? 'reference'
+                  : 'unknown';
+
+          return {
+            id:
+              attachment.id,
+
+            name:
+              attachment.name?.trim() ||
+              'Attachment',
+
+            contentType:
+              attachment.contentType?.trim() ||
+              'application/octet-stream',
+
+            size:
+              typeof attachment.size ===
+                'number'
+                ? attachment.size
+                : 0,
+
+            isInline:
+              Boolean(
+                attachment.isInline,
+              ),
+
+            attachmentType,
+
+            /*
+             * Microsoft does not provide /$value
+             * downloads for reference attachments.
+             */
+            downloadable:
+              attachmentType === 'file' ||
+              attachmentType === 'item',
+          };
+        });
+  } else {
+    const attachmentsError =
+      await attachmentsResponse.text();
+
+    console.error(
+      'Microsoft Graph attachments request failed:',
+      attachmentsResponse.status,
+      attachmentsError,
+    );
+  }
+}
+
+return NextResponse.json({
       message: {
         id:
           graphMessage.id,
@@ -287,6 +430,8 @@ export async function GET(
         body:
           graphMessage.body?.content?.trim() ||
           '',
+
+        attachments,
       },
     });
   } catch (error) {
