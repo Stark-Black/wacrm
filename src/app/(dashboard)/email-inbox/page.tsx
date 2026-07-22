@@ -26,8 +26,13 @@ import {
 import { toast } from 'sonner';
 import { useCan } from '@/hooks/use-can';
 
+
+type EmailFolder = 'inbox' | 'sent';
+
+
 interface EmailMessage {
   id: string;
+  folder: EmailFolder;
   subject: string;
   fromName: string;
   fromAddress: string;
@@ -38,6 +43,7 @@ interface EmailMessage {
 }
 
 interface EmailMessagesResponse {
+  folder: EmailFolder;
   messages: EmailMessage[];
   count: number;
   synchronizedAt: string;
@@ -148,6 +154,12 @@ export default function EmailInboxPage() {
 
   const canSendMessages =
   useCan('send-messages');
+  const [
+  activeFolder,
+  setActiveFolder,
+  ] = useState<EmailFolder>('inbox');
+
+
   const [messages, setMessages] =
     useState<EmailMessage[]>([]);
 
@@ -209,87 +221,100 @@ const [
     useState(false);
 
   const loadMessages = useCallback(
-    async (isRefresh = false) => {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
+  async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/email/messages?folder=${activeFolder}`,
+        {
+          method: 'GET',
+          cache: 'no-store',
+        },
+      );
+
+      const payload =
+        (await response.json()) as
+          EmailMessagesResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ||
+            (
+              activeFolder === 'sent'
+                ? 'Could not load Microsoft Sent Items.'
+                : 'Could not load the Microsoft Inbox.'
+            ),
+        );
       }
 
-      setError(null);
+      const nextMessages =
+        Array.isArray(payload.messages)
+          ? payload.messages
+          : [];
 
-      try {
-        const response = await fetch(
-          '/api/email/messages',
-          {
-            method: 'GET',
-            cache: 'no-store',
-          },
-        );
+      setMessages(nextMessages);
 
-        const payload =
-          (await response.json()) as
-            EmailMessagesResponse;
+      setSynchronizedAt(
+        payload.synchronizedAt ?? null,
+      );
 
-        if (!response.ok) {
-          throw new Error(
-            payload.error ||
-              'Could not load the Microsoft Inbox.',
-          );
-        }
+      setHasMore(
+        Boolean(payload.hasMore),
+      );
 
-        const nextMessages =
-          Array.isArray(payload.messages)
-            ? payload.messages
-            : [];
+      setSelectedMessageId(
+        (currentId) => {
+          const currentStillExists =
+            nextMessages.some(
+              (message) =>
+                message.id === currentId,
+            );
 
-        setMessages(nextMessages);
+          if (currentStillExists) {
+            return currentId;
+          }
 
-        setSynchronizedAt(
-          payload.synchronizedAt ?? null,
-        );
+          return null;
+        },
+      );
+    } catch (loadError) {
+      console.error(
+        `Failed to load ${activeFolder} emails:`,
+        loadError,
+      );
 
-        setHasMore(
-          Boolean(payload.hasMore),
-        );
-
-        setSelectedMessageId(
-          (currentId) => {
-            const currentStillExists =
-              nextMessages.some(
-                (message) =>
-                  message.id === currentId,
-              );
-
-            if (currentStillExists) {
-              return currentId;
-            }
-
-            return null;
-          },
-        );
-      } catch (loadError) {
-        console.error(
-          'Failed to load emails:',
-          loadError,
-        );
-
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : 'Could not load emails.',
-        );
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [],
-  );
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'Could not load emails.',
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  },
+  [activeFolder],
+);
 
   useEffect(() => {
     void loadMessages();
   }, [loadMessages]);
+
+  useEffect(() => {
+  setSearch('');
+  setSelectedMessageId(null);
+  setSelectedMessageDetail(null);
+  setMessageError(null);
+  setReplyOpen(false);
+  setReplyText('');
+}, [activeFolder]);
 
 
   useEffect(() => {
@@ -334,7 +359,7 @@ const [
         payload.message,
       );
 
-      if (!payload.message.isRead) {
+      if (activeFolder === 'inbox' &&!payload.message.isRead) {
         const readResponse =
           await fetch(
             '/api/email/message',
@@ -419,7 +444,7 @@ const [
   return () => {
     controller.abort();
   };
-}, [selectedMessageId]);
+}, [selectedMessageId, activeFolder]);
 
 
 
@@ -464,6 +489,12 @@ useEffect(() => {
 
 
     async function handleSendReply() {
+  if (activeFolder !== 'inbox') {
+  toast.error(
+    'Replies can only be sent from the Inbox.',
+  );return;}
+
+
   if (!canSendMessages) {
     toast.error(
       'You do not have permission to send emails.',
@@ -563,36 +594,42 @@ useEffect(() => {
   
 
   const unreadCount =
-    messages.filter(
-      (message) => !message.isRead,
-    ).length;
+  activeFolder === 'inbox'
+    ? messages.filter(
+        (message) => !message.isRead,
+      ).length
+    : 0;
 
   const folders = [
-    {
-      name: 'Inbox',
-      icon: Inbox,
-      count: unreadCount,
-      active: true,
-    },
-    {
-      name: 'Sent',
-      icon: Send,
-      count: 0,
-      active: false,
-    },
-    {
-      name: 'Drafts',
-      icon: FileText,
-      count: 0,
-      active: false,
-    },
-    {
-      name: 'Archived',
-      icon: Archive,
-      count: 0,
-      active: false,
-    },
-  ];
+  {
+    id: 'inbox',
+    name: 'Inbox',
+    icon: Inbox,
+    count: unreadCount,
+    enabled: true,
+  },
+  {
+    id: 'sent',
+    name: 'Sent',
+    icon: Send,
+    count: 0,
+    enabled: true,
+  },
+  {
+    id: 'drafts',
+    name: 'Drafts',
+    icon: FileText,
+    count: 0,
+    enabled: false,
+  },
+  {
+    id: 'archived',
+    name: 'Archived',
+    icon: Archive,
+    count: 0,
+    enabled: false,
+  },
+] as const;
 
   return (
     <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-5">
@@ -602,14 +639,17 @@ useEffect(() => {
             <Mail className="size-6 text-primary" />
 
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Email Inbox
-            </h1>
+            {activeFolder === 'inbox'
+              ? 'Email Inbox'
+              : 'Sent Emails'}
+          </h1>
           </div>
 
           <p className="mt-1 text-sm text-muted-foreground">
-            View and manage the company Microsoft
-            365 mailbox.
-          </p>
+          {activeFolder === 'inbox'
+            ? 'View and reply to messages received in the company mailbox.'
+            : 'View messages sent from the company Microsoft 365 mailbox.'}
+        </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -670,24 +710,37 @@ useEffect(() => {
 
           <nav className="space-y-1">
             {folders.map((folder) => {
-              const Icon = folder.icon;
+                const Icon = folder.icon;
 
-              return (
+                const selected =
+                  folder.id === activeFolder;
+
+                return (
                 <button
                   key={folder.name}
                   type="button"
-                  disabled={!folder.active}
-                  className={`
-                    flex w-full items-center gap-3
-                    rounded-lg px-3 py-2
-                    text-left text-sm font-medium
-                    transition-colors
-                    ${
-                      folder.active
-                        ? 'bg-primary/10 text-primary'
-                        : 'cursor-not-allowed text-muted-foreground opacity-60'
+                  disabled={!folder.enabled}
+                  onClick={() => {
+                    if (
+                      folder.id === 'inbox' ||
+                      folder.id === 'sent'
+                    ) {
+                      setActiveFolder(folder.id);
                     }
-                  `}
+                  }}
+                  className={`
+                  flex w-full items-center gap-3
+                  rounded-lg px-3 py-2
+                  text-left text-sm font-medium
+                  transition-colors
+                  ${
+                    selected
+                      ? 'bg-primary/10 text-primary'
+                      : folder.enabled
+                        ? 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        : 'cursor-not-allowed text-muted-foreground opacity-60'
+                  }
+                `}
                 >
                   <Icon className="size-4 shrink-0" />
 
@@ -741,7 +794,11 @@ useEffect(() => {
 
               <input
                 type="search"
-                placeholder="Search emails..."
+                placeholder={
+                  activeFolder === 'inbox'
+                    ? 'Search Inbox...'
+                    : 'Search Sent emails...'
+                }
                 value={search}
                 onChange={(event) =>
                   setSearch(event.target.value)
@@ -893,7 +950,9 @@ useEffect(() => {
                                 }
                               `}
                             >
-                              {message.fromName}
+                              {activeFolder === 'sent'
+                                ? `To: ${message.fromName}`
+                                : message.fromName}
                             </p>
 
                             <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -989,6 +1048,7 @@ useEffect(() => {
     </div>
   ) : null}
 
+  {activeFolder === 'inbox' ? (
   <button
     type="button"
     onClick={() =>
@@ -1014,6 +1074,7 @@ useEffect(() => {
     <Reply className="size-4" />
     Reply
   </button>
+) : null}
 </div>
         </div>
       </div>
@@ -1108,7 +1169,8 @@ useEffect(() => {
 
 
 
-            {replyOpen ? (
+            {activeFolder === 'inbox' &&
+replyOpen ? (
   <div
     className="
       mb-6 rounded-lg

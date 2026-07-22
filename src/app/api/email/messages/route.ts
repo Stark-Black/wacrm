@@ -1,4 +1,7 @@
-import { NextResponse } from 'next/server';
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server';
 
 import {
   getMicrosoftAccessToken,
@@ -15,20 +18,28 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type EmailFolder = 'inbox' | 'sent';
+
 interface GraphEmailAddress {
   name?: string | null;
   address?: string | null;
+}
+
+interface GraphRecipient {
+  emailAddress?: GraphEmailAddress | null;
 }
 
 interface GraphMessage {
   id: string;
   subject?: string | null;
 
-  from?: {
-    emailAddress?: GraphEmailAddress | null;
-  } | null;
+  from?: GraphRecipient | null;
+
+  toRecipients?: GraphRecipient[];
 
   receivedDateTime?: string | null;
+  sentDateTime?: string | null;
+
   isRead?: boolean;
   hasAttachments?: boolean;
   bodyPreview?: string | null;
@@ -39,8 +50,35 @@ interface GraphMessagesResponse {
   '@odata.nextLink'?: string;
 }
 
-export async function GET() {
+export async function GET(
+  request: NextRequest,
+) {
   try {
+    const requestedFolder =
+      request.nextUrl.searchParams
+        .get('folder')
+        ?.trim()
+        .toLowerCase() ??
+      'inbox';
+
+    if (
+      requestedFolder !== 'inbox' &&
+      requestedFolder !== 'sent'
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The requested email folder is not supported.',
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const folder =
+      requestedFolder as EmailFolder;
+
     const supabase =
       await createClient();
 
@@ -94,8 +132,18 @@ export async function GET() {
       accountId,
     );
 
+    const microsoftFolder =
+      folder === 'sent'
+        ? 'sentitems'
+        : 'inbox';
+
+    const orderByField =
+      folder === 'sent'
+        ? 'sentDateTime'
+        : 'receivedDateTime';
+
     const graphUrl = new URL(
-      'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages',
+      `https://graph.microsoft.com/v1.0/me/mailFolders/${microsoftFolder}/messages`,
     );
 
     graphUrl.searchParams.set(
@@ -109,7 +157,9 @@ export async function GET() {
         'id',
         'subject',
         'from',
+        'toRecipients',
         'receivedDateTime',
+        'sentDateTime',
         'isRead',
         'hasAttachments',
         'bodyPreview',
@@ -118,7 +168,7 @@ export async function GET() {
 
     graphUrl.searchParams.set(
       '$orderby',
-      'receivedDateTime desc',
+      `${orderByField} desc`,
     );
 
     const graphResponse =
@@ -141,7 +191,7 @@ export async function GET() {
         await graphResponse.text();
 
       console.error(
-        'Microsoft Graph inbox request failed:',
+        `Microsoft Graph ${folder} request failed:`,
         graphResponse.status,
         graphError,
       );
@@ -166,7 +216,9 @@ export async function GET() {
       return NextResponse.json(
         {
           error:
-            'Could not load the Microsoft Inbox.',
+            folder === 'sent'
+              ? 'Could not load Microsoft Sent Items.'
+              : 'Could not load the Microsoft Inbox.',
         },
         {
           status: 502,
@@ -181,31 +233,67 @@ export async function GET() {
     const messages =
       (graphData.value ?? []).map(
         (message) => {
-          const emailAddress =
+          const senderAddress =
             message.from?.emailAddress;
 
+          const firstRecipient =
+            message.toRecipients?.[0]
+              ?.emailAddress;
+
+          /*
+           * Inbox:
+           * Show the person who sent the email.
+           *
+           * Sent:
+           * Show the first person who received it.
+           */
+          const displayAddress =
+            folder === 'sent'
+              ? firstRecipient
+              : senderAddress;
+
+          const displayDate =
+            folder === 'sent'
+              ? message.sentDateTime
+              : message.receivedDateTime;
+
           return {
-            id: message.id,
+            id:
+              message.id,
+
+            folder,
 
             subject:
               message.subject?.trim() ||
               '(No subject)',
 
             fromName:
-              emailAddress?.name?.trim() ||
-              emailAddress?.address?.trim() ||
-              'Unknown sender',
+              displayAddress?.name?.trim() ||
+              displayAddress?.address?.trim() ||
+              (
+                folder === 'sent'
+                  ? 'Unknown recipient'
+                  : 'Unknown sender'
+              ),
 
             fromAddress:
-              emailAddress?.address?.trim() ||
+              displayAddress?.address?.trim() ||
               '',
 
             receivedDateTime:
-              message.receivedDateTime ??
+              displayDate ??
               null,
 
+            /*
+             * The read indicator is relevant to Inbox.
+             * Sent messages are displayed as read.
+             */
             isRead:
-              Boolean(message.isRead),
+              folder === 'sent'
+                ? true
+                : Boolean(
+                    message.isRead,
+                  ),
 
             hasAttachments:
               Boolean(
@@ -230,9 +318,14 @@ export async function GET() {
     } = await serviceRole
       .from('email_connections')
       .update({
-        connection_status: 'connected',
-        last_synced_at: synchronizedAt,
-        last_error: null,
+        connection_status:
+          'connected',
+
+        last_synced_at:
+          synchronizedAt,
+
+        last_error:
+          null,
       })
       .eq('id', connectionId)
       .eq('account_id', accountId);
@@ -245,8 +338,10 @@ export async function GET() {
     }
 
     return NextResponse.json({
+      folder,
       messages,
-      count: messages.length,
+      count:
+        messages.length,
       synchronizedAt,
       hasMore:
         Boolean(
