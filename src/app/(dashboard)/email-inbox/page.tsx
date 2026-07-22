@@ -16,10 +16,15 @@ import {
   MailOpen,
   Paperclip,
   RefreshCw,
+  Reply,
   Search,
   Send,
+  SendHorizontal,
   Settings,
+  X,
 } from 'lucide-react';
+import { toast } from 'sonner';
+import { useCan } from '@/hooks/use-can';
 
 interface EmailMessage {
   id: string;
@@ -140,6 +145,9 @@ function formatRecipients(
 }
 
 export default function EmailInboxPage() {
+
+  const canSendMessages =
+  useCan('send-messages');
   const [messages, setMessages] =
     useState<EmailMessage[]>([]);
 
@@ -165,6 +173,21 @@ const [
   setMessageError,
 ] =
   useState<string | null>(null);
+
+  const [
+  replyOpen,
+  setReplyOpen,
+] = useState(false);
+
+const [
+  replyText,
+  setReplyText,
+] = useState('');
+
+const [
+  sendingReply,
+  setSendingReply,
+] = useState(false);
 
   
 
@@ -400,7 +423,10 @@ const [
 
 
 
-
+useEffect(() => {
+  setReplyOpen(false);
+  setReplyText('');
+}, [selectedMessageId]);
 
   const filteredMessages =
     useMemo(() => {
@@ -434,6 +460,107 @@ const [
       (message) =>
         message.id === selectedMessageId,
     ) ?? null;
+
+
+
+    async function handleSendReply() {
+  if (!canSendMessages) {
+    toast.error(
+      'You do not have permission to send emails.',
+    );
+
+    return;
+  }
+
+  if (
+    !selectedMessageId ||
+    !selectedMessageDetail
+  ) {
+    toast.error(
+      'Select an email before replying.',
+    );
+
+    return;
+  }
+
+  const normalizedReply =
+    replyText.trim();
+
+  if (!normalizedReply) {
+    toast.error(
+      'Write a message before sending.',
+    );
+
+    return;
+  }
+
+  setSendingReply(true);
+
+  try {
+    const response =
+      await fetch(
+        '/api/email/reply',
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body: JSON.stringify({
+            id:
+              selectedMessageId,
+
+            comment:
+              normalizedReply,
+          }),
+        },
+      );
+
+    const payload =
+      (await response.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+
+    if (
+      !response.ok ||
+      !payload.success
+    ) {
+      throw new Error(
+        payload.error ||
+          'Could not send the reply.',
+      );
+    }
+
+    setReplyText('');
+    setReplyOpen(false);
+
+    toast.success(
+      'Reply sent successfully.',
+    );
+  } catch (replyError) {
+    console.error(
+      'Failed to send email reply:',
+      replyError,
+    );
+
+    toast.error(
+      replyError instanceof Error
+        ? replyError.message
+        : 'Could not send the reply.',
+    );
+  } finally {
+    setSendingReply(false);
+  }
+}
+
+
+
+
+
+  
 
   const unreadCount =
     messages.filter(
@@ -847,19 +974,47 @@ const [
             </div>
           </div>
 
-          {selectedMessage.hasAttachments ? (
-            <div
-              className="
-                inline-flex items-center gap-1.5
-                rounded-md border border-border
-                px-2.5 py-1 text-xs
-                text-muted-foreground
-              "
-            >
-              <Paperclip className="size-3.5" />
-              Attachment
-            </div>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+  {selectedMessage.hasAttachments ? (
+    <div
+      className="
+        inline-flex items-center gap-1.5
+        rounded-md border border-border
+        px-2.5 py-1 text-xs
+        text-muted-foreground
+      "
+    >
+      <Paperclip className="size-3.5" />
+      Attachment
+    </div>
+  ) : null}
+
+  <button
+    type="button"
+    onClick={() =>
+      setReplyOpen(true)
+    }
+    disabled={
+      !canSendMessages ||
+      loadingMessage ||
+      !selectedMessageDetail
+    }
+    className="
+      inline-flex h-9 items-center
+      justify-center gap-2 rounded-md
+      border border-border
+      bg-background px-3
+      text-sm font-medium text-foreground
+      transition-colors
+      hover:bg-muted
+      disabled:cursor-not-allowed
+      disabled:opacity-50
+    "
+  >
+    <Reply className="size-4" />
+    Reply
+  </button>
+</div>
         </div>
       </div>
 
@@ -945,6 +1100,151 @@ const [
                 </div>
               ) : null}
             </div>
+
+
+
+
+
+
+
+
+            {replyOpen ? (
+  <div
+    className="
+      mb-6 rounded-lg
+      border border-primary/30
+      bg-primary/5 p-4
+    "
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-sm font-semibold text-foreground">
+          Reply to{' '}
+          {selectedMessageDetail.fromName}
+        </p>
+
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedMessageDetail.fromAddress}
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          setReplyOpen(false);
+          setReplyText('');
+        }}
+        disabled={sendingReply}
+        className="
+          inline-flex size-8
+          items-center justify-center
+          rounded-md text-muted-foreground
+          transition-colors
+          hover:bg-muted
+          hover:text-foreground
+          disabled:opacity-50
+        "
+        aria-label="Close reply"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+
+    <textarea
+      value={replyText}
+      onChange={(event) =>
+        setReplyText(
+          event.target.value,
+        )
+      }
+      placeholder="Write your reply..."
+      maxLength={50_000}
+      disabled={sendingReply}
+      className="
+        mt-4 min-h-36 w-full
+        resize-y rounded-md
+        border border-border
+        bg-background p-3
+        text-sm leading-6
+        text-foreground outline-none
+        placeholder:text-muted-foreground
+        focus:border-primary
+        focus:ring-2
+        focus:ring-primary/20
+        disabled:cursor-not-allowed
+        disabled:opacity-60
+      "
+    />
+
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+      <p className="text-xs text-muted-foreground">
+        {replyText.length.toLocaleString()}
+        {' / '}
+        50,000 characters
+      </p>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setReplyOpen(false);
+            setReplyText('');
+          }}
+          disabled={sendingReply}
+          className="
+            inline-flex h-9 items-center
+            justify-center rounded-md
+            border border-border
+            bg-background px-4
+            text-sm font-medium
+            text-foreground
+            transition-colors
+            hover:bg-muted
+            disabled:opacity-50
+          "
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            void handleSendReply()
+          }
+          disabled={
+            sendingReply ||
+            !replyText.trim()
+          }
+          className="
+            inline-flex h-9 items-center
+            justify-center gap-2
+            rounded-md bg-primary
+            px-4 text-sm font-medium
+            text-primary-foreground
+            transition-colors
+            hover:bg-primary/90
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
+        >
+          {sendingReply ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <SendHorizontal className="size-4" />
+          )}
+
+          {sendingReply
+            ? 'Sending...'
+            : 'Send reply'}
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
+
+
+
 
             <div
               className="
