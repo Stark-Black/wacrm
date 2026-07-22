@@ -15,6 +15,7 @@ import {
   Mail,
   MailOpen,
   Paperclip,
+  Plus,
   RefreshCw,
   Reply,
   Search,
@@ -149,6 +150,20 @@ function formatRecipients(
     .filter(Boolean)
     .join(', ');
 }
+function splitEmailAddresses(
+  value: string,
+): string[] {
+  return value
+    .split(/[;,]/)
+    .map((address) =>
+      address.trim(),
+    )
+    .filter(Boolean);
+}
+
+
+
+
 
 export default function EmailInboxPage() {
 
@@ -201,10 +216,37 @@ const [
   setSendingReply,
 ] = useState(false);
 
+const [
+  composeOpen,
+  setComposeOpen,
+] = useState(false);
+
+const [
+  composeTo,
+  setComposeTo,
+] = useState('');
+
+const [
+  composeCc,
+  setComposeCc,
+] = useState('');
+
+const [
+  composeSubject,
+  setComposeSubject,
+] = useState('');
+
+const [
+  composeBody,
+  setComposeBody,
+] = useState('');
+
+const [
+  sendingMessage,
+  setSendingMessage,
+] = useState(false);
+
   
-
-
-
 
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -590,6 +632,136 @@ useEffect(() => {
 
 
 
+function resetComposeForm() {
+  setComposeTo('');
+  setComposeCc('');
+  setComposeSubject('');
+  setComposeBody('');
+}
+
+function closeCompose() {
+  if (sendingMessage) {
+    return;
+  }
+
+  setComposeOpen(false);
+  resetComposeForm();
+}
+
+async function handleSendMessage() {
+  if (!canSendMessages) {
+    toast.error(
+      'You do not have permission to send emails.',
+    );
+
+    return;
+  }
+
+  const toRecipients =
+    splitEmailAddresses(composeTo);
+
+  const ccRecipients =
+    splitEmailAddresses(composeCc);
+
+  if (toRecipients.length === 0) {
+    toast.error(
+      'Add at least one recipient.',
+    );
+
+    return;
+  }
+
+  if (!composeSubject.trim()) {
+    toast.error(
+      'Write a subject before sending.',
+    );
+
+    return;
+  }
+
+  if (!composeBody.trim()) {
+    toast.error(
+      'Write a message before sending.',
+    );
+
+    return;
+  }
+
+  setSendingMessage(true);
+
+  try {
+    const response =
+      await fetch(
+        '/api/email/send',
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body: JSON.stringify({
+            to:
+              toRecipients,
+
+            cc:
+              ccRecipients,
+
+            subject:
+              composeSubject.trim(),
+
+            body:
+              composeBody.trim(),
+          }),
+        },
+      );
+
+    const payload =
+      (await response.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+
+    if (
+      !response.ok ||
+      !payload.success
+    ) {
+      throw new Error(
+        payload.error ||
+          'Could not send the email.',
+      );
+    }
+
+    setComposeOpen(false);
+    resetComposeForm();
+
+    toast.success(
+      'Email sent successfully.',
+    );
+
+    if (activeFolder === 'sent') {
+      await loadMessages(true);
+    }
+  } catch (sendError) {
+    console.error(
+      'Failed to send new email:',
+      sendError,
+    );
+
+    toast.error(
+      sendError instanceof Error
+        ? sendError.message
+        : 'Could not send the email.',
+    );
+  } finally {
+    setSendingMessage(false);
+  }
+}
+
+
+
+
 
   
 
@@ -656,6 +828,29 @@ useEffect(() => {
           <button
             type="button"
             onClick={() =>
+              setComposeOpen(
+                (current) => !current,
+              )
+            }
+            disabled={!canSendMessages}
+            className="
+              inline-flex h-9 items-center
+              justify-center gap-2
+              rounded-md bg-primary
+              px-4 text-sm font-medium
+              text-primary-foreground
+              transition-colors
+              hover:bg-primary/90
+              disabled:cursor-not-allowed
+              disabled:opacity-50
+            "
+          >
+            <Plus className="size-4" />
+            Compose
+          </button>
+          <button
+            type="button"
+            onClick={() =>
               void loadMessages(true)
             }
             disabled={refreshing}
@@ -695,6 +890,255 @@ useEffect(() => {
           </Link>
         </div>
       </div>
+
+      {composeOpen ? (
+  <section
+    className="
+      rounded-xl border
+      border-primary/30
+      bg-card p-5
+      shadow-sm
+    "
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">
+          New email
+        </h2>
+
+        <p className="mt-1 text-sm text-muted-foreground">
+          Send a new message from the connected
+          Microsoft 365 mailbox.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={closeCompose}
+        disabled={sendingMessage}
+        className="
+          inline-flex size-8
+          items-center justify-center
+          rounded-md text-muted-foreground
+          transition-colors
+          hover:bg-muted
+          hover:text-foreground
+          disabled:opacity-50
+        "
+        aria-label="Close compose"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+
+    <div className="mt-5 grid gap-4">
+      <div className="grid gap-2">
+        <label
+          htmlFor="compose-to"
+          className="text-sm font-medium text-foreground"
+        >
+          To
+        </label>
+
+        <input
+          id="compose-to"
+          type="text"
+          value={composeTo}
+          onChange={(event) =>
+            setComposeTo(
+              event.target.value,
+            )
+          }
+          placeholder="customer@example.com"
+          disabled={sendingMessage}
+          className="
+            h-10 w-full rounded-md
+            border border-border
+            bg-background px-3
+            text-sm text-foreground
+            outline-none
+            placeholder:text-muted-foreground
+            focus:border-primary
+            focus:ring-2
+            focus:ring-primary/20
+            disabled:opacity-60
+          "
+        />
+
+        <p className="text-xs text-muted-foreground">
+          Separate multiple addresses with commas
+          or semicolons.
+        </p>
+      </div>
+
+      <div className="grid gap-2">
+        <label
+          htmlFor="compose-cc"
+          className="text-sm font-medium text-foreground"
+        >
+          Cc
+        </label>
+
+        <input
+          id="compose-cc"
+          type="text"
+          value={composeCc}
+          onChange={(event) =>
+            setComposeCc(
+              event.target.value,
+            )
+          }
+          placeholder="Optional"
+          disabled={sendingMessage}
+          className="
+            h-10 w-full rounded-md
+            border border-border
+            bg-background px-3
+            text-sm text-foreground
+            outline-none
+            placeholder:text-muted-foreground
+            focus:border-primary
+            focus:ring-2
+            focus:ring-primary/20
+            disabled:opacity-60
+          "
+        />
+      </div>
+
+      <div className="grid gap-2">
+        <label
+          htmlFor="compose-subject"
+          className="text-sm font-medium text-foreground"
+        >
+          Subject
+        </label>
+
+        <input
+          id="compose-subject"
+          type="text"
+          value={composeSubject}
+          onChange={(event) =>
+            setComposeSubject(
+              event.target.value,
+            )
+          }
+          placeholder="Email subject"
+          maxLength={500}
+          disabled={sendingMessage}
+          className="
+            h-10 w-full rounded-md
+            border border-border
+            bg-background px-3
+            text-sm text-foreground
+            outline-none
+            placeholder:text-muted-foreground
+            focus:border-primary
+            focus:ring-2
+            focus:ring-primary/20
+            disabled:opacity-60
+          "
+        />
+      </div>
+
+      <div className="grid gap-2">
+        <label
+          htmlFor="compose-body"
+          className="text-sm font-medium text-foreground"
+        >
+          Message
+        </label>
+
+        <textarea
+          id="compose-body"
+          value={composeBody}
+          onChange={(event) =>
+            setComposeBody(
+              event.target.value,
+            )
+          }
+          placeholder="Write your email..."
+          maxLength={100_000}
+          disabled={sendingMessage}
+          className="
+            min-h-48 w-full resize-y
+            rounded-md border
+            border-border bg-background
+            p-3 text-sm leading-6
+            text-foreground outline-none
+            placeholder:text-muted-foreground
+            focus:border-primary
+            focus:ring-2
+            focus:ring-primary/20
+            disabled:opacity-60
+          "
+        />
+      </div>
+    </div>
+
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+      <p className="text-xs text-muted-foreground">
+        {composeBody.length.toLocaleString()}
+        {' / '}
+        100,000 characters
+      </p>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={closeCompose}
+          disabled={sendingMessage}
+          className="
+            inline-flex h-9
+            items-center justify-center
+            rounded-md border
+            border-border bg-background
+            px-4 text-sm font-medium
+            text-foreground
+            transition-colors
+            hover:bg-muted
+            disabled:opacity-50
+          "
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            void handleSendMessage()
+          }
+          disabled={
+            sendingMessage ||
+            !composeTo.trim() ||
+            !composeSubject.trim() ||
+            !composeBody.trim()
+          }
+          className="
+            inline-flex h-9
+            items-center justify-center
+            gap-2 rounded-md bg-primary
+            px-4 text-sm font-medium
+            text-primary-foreground
+            transition-colors
+            hover:bg-primary/90
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
+        >
+          {sendingMessage ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <SendHorizontal className="size-4" />
+          )}
+
+          {sendingMessage
+            ? 'Sending...'
+            : 'Send email'}
+        </button>
+      </div>
+    </div>
+  </section>
+) : null}
 
       <div
         className="
