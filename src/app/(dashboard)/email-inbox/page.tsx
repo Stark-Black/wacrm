@@ -13,6 +13,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Forward,
   Inbox,
   Loader2,
   Mail,
@@ -465,6 +466,28 @@ const [
 ] = useState(false);
 
 const [
+  forwardOpen,
+  setForwardOpen,
+] = useState(false);
+
+const [
+  forwardTo,
+  setForwardTo,
+] = useState('');
+
+const [
+  forwardComment,
+  setForwardComment,
+] = useState('');
+
+const [
+  forwardingMessage,
+  setForwardingMessage,
+] = useState(false);
+
+
+
+const [
   composeOpen,
   setComposeOpen,
 ] = useState(false);
@@ -594,16 +617,17 @@ const [
 );
 
   useEffect(() => {
-    void loadMessages();
-  }, [loadMessages]);
-
-  useEffect(() => {
   setSearch('');
   setSelectedMessageId(null);
   setSelectedMessageDetail(null);
   setMessageError(null);
+
   setReplyOpen(false);
   setReplyText('');
+
+  setForwardOpen(false);
+  setForwardTo('');
+  setForwardComment('');
 }, [activeFolder]);
 
 
@@ -741,6 +765,10 @@ const [
 useEffect(() => {
   setReplyOpen(false);
   setReplyText('');
+
+  setForwardOpen(false);
+  setForwardTo('');
+  setForwardComment('');
 }, [selectedMessageId]);
 
   const filteredMessages =
@@ -791,7 +819,7 @@ useEffect(() => {
     );
 
 
-    async function handleSendReply() {
+async function handleSendReply() {
   if (activeFolder !== 'inbox') {
   toast.error(
     'Replies can only be sent from the Inbox.',
@@ -889,6 +917,120 @@ useEffect(() => {
     setSendingReply(false);
   }
 }
+
+function closeForward() {
+  if (forwardingMessage) {
+    return;
+  }
+
+  setForwardOpen(false);
+  setForwardTo('');
+  setForwardComment('');
+}
+
+async function handleForwardMessage() {
+  if (!canSendMessages) {
+    toast.error(
+      'You do not have permission to forward emails.',
+    );
+
+    return;
+  }
+
+  if (
+    !selectedMessageId ||
+    !selectedMessageDetail
+  ) {
+    toast.error(
+      'Select an email before forwarding.',
+    );
+
+    return;
+  }
+
+  const recipients =
+    splitEmailAddresses(
+      forwardTo,
+    );
+
+  if (recipients.length === 0) {
+    toast.error(
+      'Add at least one recipient.',
+    );
+
+    return;
+  }
+
+  setForwardingMessage(true);
+
+  try {
+    const response =
+      await fetch(
+        '/api/email/forward',
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body: JSON.stringify({
+            id:
+              selectedMessageId,
+
+            to:
+              recipients,
+
+            comment:
+              forwardComment.trim(),
+          }),
+        },
+      );
+
+    const payload =
+      (await response.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+
+    if (
+      !response.ok ||
+      !payload.success
+    ) {
+      throw new Error(
+        payload.error ||
+          'Could not forward the email.',
+      );
+    }
+
+    setForwardOpen(false);
+    setForwardTo('');
+    setForwardComment('');
+
+    toast.success(
+      'Email forwarded successfully.',
+    );
+
+    if (activeFolder === 'sent') {
+      await loadMessages(true);
+    }
+  } catch (forwardError) {
+    console.error(
+      'Failed to forward email:',
+      forwardError,
+    );
+
+    toast.error(
+      forwardError instanceof Error
+        ? forwardError.message
+        : 'Could not forward the email.',
+    );
+  } finally {
+    setForwardingMessage(false);
+  }
+}
+
 
 
 
@@ -1753,12 +1895,45 @@ async function handleSendMessage() {
     </div>
   ) : null}
 
+  <button
+  type="button"
+  onClick={() => {
+    setReplyOpen(false);
+    setReplyText('');
+
+    setForwardOpen(true);
+  }}
+  disabled={
+    !canSendMessages ||
+    loadingMessage ||
+    !selectedMessageDetail
+  }
+  className="
+    inline-flex h-9 items-center
+    justify-center gap-2 rounded-md
+    border border-border
+    bg-background px-3
+    text-sm font-medium text-foreground
+    transition-colors
+    hover:bg-muted
+    disabled:cursor-not-allowed
+    disabled:opacity-50
+  "
+>
+  <Forward className="size-4" />
+  Forward
+</button>
+
   {activeFolder === 'inbox' ? (
   <button
     type="button"
-    onClick={() =>
-      setReplyOpen(true)
-    }
+    onClick={() => {
+      setForwardOpen(false);
+      setForwardTo('');
+      setForwardComment('');
+
+      setReplyOpen(true);
+    }}
     disabled={
       !canSendMessages ||
       loadingMessage ||
@@ -1987,8 +2162,198 @@ async function handleSendMessage() {
 ) : null}
 
 
-            {activeFolder === 'inbox' &&
-replyOpen ? (
+{forwardOpen ? (
+  <div
+    className="
+      mb-6 rounded-lg
+      border border-primary/30
+      bg-primary/5 p-4
+    "
+  >
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-sm font-semibold text-foreground">
+          Forward email
+        </p>
+
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedMessageDetail.subject}
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={closeForward}
+        disabled={forwardingMessage}
+        className="
+          inline-flex size-8
+          items-center justify-center
+          rounded-md text-muted-foreground
+          transition-colors
+          hover:bg-muted
+          hover:text-foreground
+          disabled:opacity-50
+        "
+        aria-label="Close forward"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+
+    <div className="mt-4 grid gap-2">
+      <label
+        htmlFor="forward-to"
+        className="text-sm font-medium text-foreground"
+      >
+        To
+      </label>
+
+      <input
+        id="forward-to"
+        type="text"
+        value={forwardTo}
+        onChange={(event) =>
+          setForwardTo(
+            event.target.value,
+          )
+        }
+        placeholder="recipient@example.com"
+        disabled={forwardingMessage}
+        className="
+          h-10 w-full rounded-md
+          border border-border
+          bg-background px-3
+          text-sm text-foreground
+          outline-none
+          placeholder:text-muted-foreground
+          focus:border-primary
+          focus:ring-2
+          focus:ring-primary/20
+          disabled:opacity-60
+        "
+      />
+
+      <p className="text-xs text-muted-foreground">
+        Separate multiple addresses with commas
+        or semicolons.
+      </p>
+    </div>
+
+    <div className="mt-4 grid gap-2">
+      <label
+        htmlFor="forward-comment"
+        className="text-sm font-medium text-foreground"
+      >
+        Comment
+      </label>
+
+      <textarea
+        id="forward-comment"
+        value={forwardComment}
+        onChange={(event) =>
+          setForwardComment(
+            event.target.value,
+          )
+        }
+        placeholder="Optional message..."
+        maxLength={50_000}
+        disabled={forwardingMessage}
+        className="
+          min-h-28 w-full resize-y
+          rounded-md border
+          border-border bg-background
+          p-3 text-sm leading-6
+          text-foreground outline-none
+          placeholder:text-muted-foreground
+          focus:border-primary
+          focus:ring-2
+          focus:ring-primary/20
+          disabled:opacity-60
+        "
+      />
+    </div>
+
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+      <p className="text-xs text-muted-foreground">
+        {forwardComment.length.toLocaleString()}
+        {' / '}
+        50,000 characters
+      </p>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={closeForward}
+          disabled={forwardingMessage}
+          className="
+            inline-flex h-9 items-center
+            justify-center rounded-md
+            border border-border
+            bg-background px-4
+            text-sm font-medium
+            text-foreground
+            transition-colors
+            hover:bg-muted
+            disabled:opacity-50
+          "
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            void handleForwardMessage()
+          }
+          disabled={
+            forwardingMessage ||
+            !forwardTo.trim()
+          }
+          className="
+            inline-flex h-9 items-center
+            justify-center gap-2
+            rounded-md bg-primary
+            px-4 text-sm font-medium
+            text-primary-foreground
+            transition-colors
+            hover:bg-primary/90
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
+        >
+          {forwardingMessage ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Forward className="size-4" />
+          )}
+
+          {forwardingMessage
+            ? 'Forwarding...'
+            : 'Forward email'}
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{activeFolder === 'inbox' && replyOpen ? (
   <div
     className="
       mb-6 rounded-lg
