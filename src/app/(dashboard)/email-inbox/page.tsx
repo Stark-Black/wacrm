@@ -9,7 +9,9 @@ import {
 } from 'react';
 import {
   Archive,
+  Cloud,
   Download,
+  ExternalLink,
   FileText,
   Inbox,
   Loader2,
@@ -71,6 +73,11 @@ interface EmailAttachment {
     | 'unknown';
 
   downloadable: boolean;
+}
+
+interface EmailCloudLink {
+  name: string;
+  url: string;
 }
 
 interface EmailMessageDetail
@@ -216,6 +223,193 @@ function formatFileSize(
   )} ${units[unitIndex]}`;
 }
 
+function isMicrosoftCloudFileUrl(
+  value: string,
+): boolean {
+  try {
+    const url = new URL(value);
+
+    if (url.protocol !== 'https:') {
+      return false;
+    }
+
+    const hostname =
+      url.hostname.toLowerCase();
+
+    return (
+      hostname === '1drv.ms' ||
+      hostname === 'onedrive.live.com' ||
+      hostname.endsWith(
+        '.sharepoint.com',
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function extractCloudLinks(
+  value: string,
+): {
+  cleanBody: string;
+  cloudLinks: EmailCloudLink[];
+} {
+  const cloudLinks: EmailCloudLink[] =
+    [];
+
+  const registeredUrls =
+    new Set<string>();
+
+  function registerLink(
+    name: string,
+    url: string,
+  ) {
+    const normalizedUrl =
+      url.trim();
+
+    if (
+      !isMicrosoftCloudFileUrl(
+        normalizedUrl,
+      ) ||
+      registeredUrls.has(
+        normalizedUrl,
+      )
+    ) {
+      return;
+    }
+
+    registeredUrls.add(
+      normalizedUrl,
+    );
+
+    cloudLinks.push({
+      name:
+        name
+          .replace(/\s+/g, ' ')
+          .trim() ||
+        'Shared file',
+
+      url:
+        normalizedUrl,
+    });
+  }
+
+  /*
+   * Detecta el formato que devuelve Outlook:
+   *
+   * [URL_DEL_ICONO]archivo.pdf<URL_ONEDRIVE>
+   */
+  const outlookLinkPattern =
+    /\[(?:https?:\/\/[^\]\r\n]+)\]([^<\r\n]{1,240})<(https?:\/\/[^>\r\n]+)>/gi;
+
+  let cleanBody =
+    value.replace(
+      outlookLinkPattern,
+      (
+        completeMatch,
+        name: string,
+        url: string,
+      ) => {
+        if (
+          !isMicrosoftCloudFileUrl(
+            url.trim(),
+          )
+        ) {
+          return completeMatch;
+        }
+
+        registerLink(
+          name,
+          url,
+        );
+
+        return '';
+      },
+    );
+
+  /*
+   * También detecta:
+   *
+   * archivo.pdf<URL_ONEDRIVE>
+   */
+  const plainCloudLinkPattern =
+    /^\s*([^<\r\n]{1,240}?)\s*<(https?:\/\/[^>\r\n]+)>\s*$/gim;
+
+  cleanBody =
+    cleanBody.replace(
+      plainCloudLinkPattern,
+      (
+        completeMatch,
+        name: string,
+        url: string,
+      ) => {
+        if (
+          !isMicrosoftCloudFileUrl(
+            url.trim(),
+          )
+        ) {
+          return completeMatch;
+        }
+
+        registerLink(
+          name,
+          url,
+        );
+
+        return '';
+      },
+    );
+
+  /*
+   * También permite detectar:
+   *
+   * [archivo.pdf](URL_ONEDRIVE)
+   */
+  const markdownCloudLinkPattern =
+    /\[([^\]\r\n]{1,240})\]\((https?:\/\/[^)\r\n]+)\)/gi;
+
+  cleanBody =
+    cleanBody.replace(
+      markdownCloudLinkPattern,
+      (
+        completeMatch,
+        name: string,
+        url: string,
+      ) => {
+        if (
+          !isMicrosoftCloudFileUrl(
+            url.trim(),
+          )
+        ) {
+          return completeMatch;
+        }
+
+        registerLink(
+          name,
+          url,
+        );
+
+        return '';
+      },
+    );
+
+  cleanBody =
+    cleanBody
+      .replace(
+        /[ \t]+\r?\n/g,
+        '\n',
+      )
+      .replace(
+        /\n{3,}/g,
+        '\n\n',
+      )
+      .trim();
+
+  return {
+    cleanBody,
+    cloudLinks,
+  };
+}
 
 
 
@@ -582,6 +776,19 @@ useEffect(() => {
         message.id === selectedMessageId,
     ) ?? null;
 
+  const selectedMessageBody =
+  selectedMessageDetail?.body ||
+  selectedMessage?.preview ||
+  '';
+
+  const displayedMessageContent =
+    useMemo(
+      () =>
+        extractCloudLinks(
+          selectedMessageBody,
+        ),
+      [selectedMessageBody],
+    );
 
 
     async function handleSendReply() {
@@ -1915,22 +2122,117 @@ replyOpen ? (
   </div>
 ) : null}
 
+            {displayedMessageContent
+  .cloudLinks.length > 0 ? (
+  <div className="mb-6">
+    <div className="mb-3 flex items-center gap-2">
+      <Cloud className="size-4 text-muted-foreground" />
 
+      <h3 className="text-sm font-semibold text-foreground">
+        Shared files
+      </h3>
 
+      <span className="text-xs text-muted-foreground">
+        (
+        {
+          displayedMessageContent
+            .cloudLinks.length
+        }
+        )
+      </span>
+    </div>
 
-
+    <div className="grid gap-2">
+      {displayedMessageContent
+        .cloudLinks.map(
+          (cloudLink) => (
             <div
+              key={cloudLink.url}
               className="
-                whitespace-pre-wrap
-                break-words
-                text-sm leading-7
-                text-foreground
+                flex flex-wrap items-center
+                justify-between gap-3
+                rounded-lg border
+                border-border
+                bg-muted/20 p-3
               "
             >
-              {selectedMessageDetail.body ||
-                selectedMessage.preview ||
-                'No message content is available.'}
+              <div className="flex min-w-0 items-center gap-3">
+                <div
+                  className="
+                    flex size-9 shrink-0
+                    items-center justify-center
+                    rounded-md bg-primary/10
+                    text-primary
+                  "
+                >
+                  <Cloud className="size-4" />
+                </div>
+
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {cloudLink.name}
+                  </p>
+
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Shared through OneDrive or
+                    SharePoint
+                  </p>
+                </div>
+              </div>
+
+              <a
+                href={cloudLink.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="
+                  inline-flex h-9
+                  shrink-0 items-center
+                  justify-center gap-2
+                  rounded-md border
+                  border-border
+                  bg-background px-3
+                  text-sm font-medium
+                  text-foreground
+                  transition-colors
+                  hover:bg-muted
+                "
+              >
+                <ExternalLink className="size-4" />
+                Open shared file
+              </a>
             </div>
+          ),
+        )}
+    </div>
+
+    <p className="mt-2 text-xs text-muted-foreground">
+      Access depends on the permissions
+      configured by the file owner.
+    </p>
+  </div>
+) : null}
+
+{displayedMessageContent
+  .cleanBody ? (
+  <div
+    className="
+      whitespace-pre-wrap
+      break-words
+      text-sm leading-7
+      text-foreground
+    "
+  >
+    {
+      displayedMessageContent
+        .cleanBody
+    }
+  </div>
+) : displayedMessageContent
+    .cloudLinks.length === 0 ? (
+  <div className="text-sm text-muted-foreground">
+    No message content is available.
+  </div>
+) : null}
           </div>
         ) : null}
       </div>
