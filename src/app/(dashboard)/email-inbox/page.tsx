@@ -81,9 +81,16 @@ interface EmailAttachment {
   downloadable: boolean;
 }
 
+
 interface EmailCloudLink {
   name: string;
   url: string;
+}
+
+interface EmailExternalLink {
+  label: string;
+  url: string;
+  hostname: string;
 }
 
 interface EmailMessageDetail
@@ -254,19 +261,89 @@ function isMicrosoftCloudFileUrl(
   }
 }
 
-function extractCloudLinks(
+function isSafeHttpUrl(
+  value: string,
+): boolean {
+  try {
+    const url = new URL(value);
+
+    return (
+      url.protocol === 'https:' ||
+      url.protocol === 'http:'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getLinkHostname(
+  value: string,
+): string {
+  try {
+    return new URL(value)
+      .hostname
+      .replace(/^www\./i, '');
+  } catch {
+    return '';
+  }
+}
+
+function formatExternalLinkLabel(
+  value: string,
+  url: string,
+): string {
+  const cleanedLabel =
+    value
+      .replace(/[\[\]]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const knownLabels:
+    Record<string, string> = {
+      facebook: 'Facebook',
+      youtube: 'YouTube',
+      tiktok: 'TikTok',
+      instagram: 'Instagram',
+      website: 'Website',
+    };
+
+  if (cleanedLabel) {
+    return (
+      knownLabels[
+        cleanedLabel.toLowerCase()
+      ] ?? cleanedLabel
+    );
+  }
+
+  return (
+    getLinkHostname(url) ||
+    'Open link'
+  );
+}
+
+
+ 
+
+function extractMessageContent(
   value: string,
 ): {
   cleanBody: string;
   cloudLinks: EmailCloudLink[];
+  externalLinks: EmailExternalLink[];
 } {
-  const cloudLinks: EmailCloudLink[] =
-    [];
+  const cloudLinks:
+    EmailCloudLink[] = [];
 
-  const registeredUrls =
+  const externalLinks:
+    EmailExternalLink[] = [];
+
+  const registeredCloudUrls =
     new Set<string>();
 
-  function registerLink(
+  const registeredExternalUrls =
+    new Set<string>();
+
+  function registerCloudLink(
     name: string,
     url: string,
   ) {
@@ -277,14 +354,14 @@ function extractCloudLinks(
       !isMicrosoftCloudFileUrl(
         normalizedUrl,
       ) ||
-      registeredUrls.has(
+      registeredCloudUrls.has(
         normalizedUrl,
       )
     ) {
       return;
     }
 
-    registeredUrls.add(
+    registeredCloudUrls.add(
       normalizedUrl,
     );
 
@@ -300,17 +377,59 @@ function extractCloudLinks(
     });
   }
 
+  function registerExternalLink(
+    label: string,
+    url: string,
+  ) {
+    const normalizedUrl =
+      url.trim();
+
+    if (
+      !isSafeHttpUrl(
+        normalizedUrl,
+      ) ||
+      isMicrosoftCloudFileUrl(
+        normalizedUrl,
+      ) ||
+      registeredExternalUrls.has(
+        normalizedUrl,
+      )
+    ) {
+      return;
+    }
+
+    registeredExternalUrls.add(
+      normalizedUrl,
+    );
+
+    externalLinks.push({
+      label:
+        formatExternalLinkLabel(
+          label,
+          normalizedUrl,
+        ),
+
+      url:
+        normalizedUrl,
+
+      hostname:
+        getLinkHostname(
+          normalizedUrl,
+        ),
+    });
+  }
+
   /*
-   * Detecta el formato que devuelve Outlook:
+   * Formato de archivos compartidos:
    *
-   * [URL_DEL_ICONO]archivo.pdf<URL_ONEDRIVE>
+   * [URL_ICONO]archivo.pdf<URL_ONEDRIVE>
    */
-  const outlookLinkPattern =
+  const outlookCloudPattern =
     /\[(?:https?:\/\/[^\]\r\n]+)\]([^<\r\n]{1,240})<(https?:\/\/[^>\r\n]+)>/gi;
 
   let cleanBody =
     value.replace(
-      outlookLinkPattern,
+      outlookCloudPattern,
       (
         completeMatch,
         name: string,
@@ -324,7 +443,7 @@ function extractCloudLinks(
           return completeMatch;
         }
 
-        registerLink(
+        registerCloudLink(
           name,
           url,
         );
@@ -334,16 +453,14 @@ function extractCloudLinks(
     );
 
   /*
-   * También detecta:
-   *
    * archivo.pdf<URL_ONEDRIVE>
    */
-  const plainCloudLinkPattern =
+  const plainCloudPattern =
     /^\s*([^<\r\n]{1,240}?)\s*<(https?:\/\/[^>\r\n]+)>\s*$/gim;
 
   cleanBody =
     cleanBody.replace(
-      plainCloudLinkPattern,
+      plainCloudPattern,
       (
         completeMatch,
         name: string,
@@ -357,7 +474,7 @@ function extractCloudLinks(
           return completeMatch;
         }
 
-        registerLink(
+        registerCloudLink(
           name,
           url,
         );
@@ -367,16 +484,14 @@ function extractCloudLinks(
     );
 
   /*
-   * También permite detectar:
-   *
    * [archivo.pdf](URL_ONEDRIVE)
    */
-  const markdownCloudLinkPattern =
+  const markdownCloudPattern =
     /\[([^\]\r\n]{1,240})\]\((https?:\/\/[^)\r\n]+)\)/gi;
 
   cleanBody =
     cleanBody.replace(
-      markdownCloudLinkPattern,
+      markdownCloudPattern,
       (
         completeMatch,
         name: string,
@@ -390,13 +505,94 @@ function extractCloudLinks(
           return completeMatch;
         }
 
-        registerLink(
+        registerCloudLink(
           name,
           url,
         );
 
         return '';
       },
+    );
+
+  /*
+   * Enlaces sociales:
+   *
+   * [facebook]<URL>
+   * [youtube]<URL>
+   */
+  const labeledExternalPattern =
+    /\[([^\]\r\n]{1,80})\]\s*<(https?:\/\/[^>\r\n]+)>/gi;
+
+  cleanBody =
+    cleanBody.replace(
+      labeledExternalPattern,
+      (
+        completeMatch,
+        label: string,
+        url: string,
+      ) => {
+        if (
+          !isSafeHttpUrl(
+            url.trim(),
+          )
+        ) {
+          return completeMatch;
+        }
+
+        registerExternalLink(
+          label,
+          url,
+        );
+
+        return '';
+      },
+    );
+
+  /*
+   * Enlaces con texto:
+   *
+   * www.systempass.us <URL>
+   */
+  const namedExternalPattern =
+    /(^|\n)\s*([^\n<\[\]]{1,120}?)\s*<(https?:\/\/[^>\r\n]+)>\s*(?=\n|$)/gi;
+
+  cleanBody =
+    cleanBody.replace(
+      namedExternalPattern,
+      (
+        completeMatch,
+        lineStart: string,
+        label: string,
+        url: string,
+      ) => {
+        if (
+          !isSafeHttpUrl(
+            url.trim(),
+          )
+        ) {
+          return completeMatch;
+        }
+
+        registerExternalLink(
+          label,
+          url,
+        );
+
+        return lineStart;
+      },
+    );
+
+  /*
+   * Elimina etiquetas vacías generadas
+   * por las imágenes de la firma.
+   *
+   * El teléfono y la dirección que aparecen
+   * después de [mobile] y [map] se conservan.
+   */
+  cleanBody =
+    cleanBody.replace(
+      /^\s*\[(?:image|mobile|map|facebook|youtube|tiktok|instagram|website)\]\s*$/gim,
+      '',
     );
 
   cleanBody =
@@ -414,8 +610,15 @@ function extractCloudLinks(
   return {
     cleanBody,
     cloudLinks,
+    externalLinks,
   };
 }
+
+  /*
+   * Detecta el formato que devuelve Outlook:
+   *
+   * [URL_DEL_ICONO]archivo.pdf<URL_ONEDRIVE>
+   */
 
 const COMPOSE_MAX_FILES = 5;
 
@@ -844,13 +1047,13 @@ useEffect(() => {
   '';
 
   const displayedMessageContent =
-    useMemo(
-      () =>
-        extractCloudLinks(
-          selectedMessageBody,
-        ),
-      [selectedMessageBody],
-    );
+  useMemo(
+    () =>
+      extractMessageContent(
+        selectedMessageBody,
+      ),
+    [selectedMessageBody],
+  );
 
 
 async function handleSendReply() {
@@ -2952,7 +3155,7 @@ async function handleSendMessage() {
   </div>
 ) : null}
 
-            {displayedMessageContent
+{displayedMessageContent
   .cloudLinks.length > 0 ? (
   <div className="mb-6">
     <div className="mb-3 flex items-center gap-2">
@@ -3041,6 +3244,68 @@ async function handleSendMessage() {
     </p>
   </div>
 ) : null}
+
+{displayedMessageContent
+  .externalLinks.length > 0 ? (
+  <div className="mb-6">
+    <div className="mb-3 flex items-center gap-2">
+      <ExternalLink className="size-4 text-muted-foreground" />
+
+      <h3 className="text-sm font-semibold text-foreground">
+        Links
+      </h3>
+
+      <span className="text-xs text-muted-foreground">
+        (
+        {
+          displayedMessageContent
+            .externalLinks.length
+        }
+        )
+      </span>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      {displayedMessageContent
+        .externalLinks.map(
+          (link) => (
+            <a
+              key={link.url}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="
+                inline-flex min-w-36
+                items-center justify-between
+                gap-3 rounded-lg
+                border border-border
+                bg-muted/20 px-3 py-2
+                text-sm text-foreground
+                transition-colors
+                hover:bg-muted
+              "
+            >
+              <span className="min-w-0">
+                <span className="block font-medium">
+                  {link.label}
+                </span>
+
+                {link.hostname ? (
+                  <span className="block max-w-48 truncate text-xs text-muted-foreground">
+                    {link.hostname}
+                  </span>
+                ) : null}
+              </span>
+
+              <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
+            </a>
+          ),
+        )}
+    </div>
+  </div>
+) : null}
+
+
 
 {displayedMessageContent
   .cleanBody ? (
