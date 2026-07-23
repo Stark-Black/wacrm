@@ -18,7 +18,11 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type EmailFolder =  | 'inbox'  | 'sent'  | 'archived';
+type EmailFolder =
+  | 'inbox'
+  | 'sent'
+  | 'drafts'
+  | 'archived';
 
 interface GraphEmailAddress {
   name?: string | null;
@@ -39,6 +43,7 @@ interface GraphMessage {
 
   receivedDateTime?: string | null;
   sentDateTime?: string | null;
+  lastModifiedDateTime?: string | null;
 
   isRead?: boolean;
   hasAttachments?: boolean;
@@ -64,8 +69,9 @@ export async function GET(
     if (
         requestedFolder !== 'inbox' &&
         requestedFolder !== 'sent' &&
+        requestedFolder !== 'drafts' &&
         requestedFolder !== 'archived'
-        ) {
+      ) {
       return NextResponse.json(
         {
           error:
@@ -136,14 +142,18 @@ export async function GET(
     const microsoftFolder =
       folder === 'sent'
         ? 'sentitems'
-        : folder === 'archived'
-          ? 'archive'
-          : 'inbox';
+        : folder === 'drafts'
+          ? 'drafts'
+          : folder === 'archived'
+            ? 'archive'
+            : 'inbox';
 
     const orderByField =
       folder === 'sent'
         ? 'sentDateTime'
-        : 'receivedDateTime';
+        : folder === 'drafts'
+          ? 'lastModifiedDateTime'
+          : 'receivedDateTime';
 
     const graphUrl = new URL(
       `https://graph.microsoft.com/v1.0/me/mailFolders/${microsoftFolder}/messages`,
@@ -164,6 +174,7 @@ export async function GET(
         'receivedDateTime',
         'sentDateTime',
         'isRead',
+        'lastModifiedDateTime',
         'hasAttachments',
         'bodyPreview',
       ].join(','),
@@ -221,9 +232,11 @@ export async function GET(
           error:
             folder === 'sent'
               ? 'Could not load Microsoft Sent Items.'
-              : folder === 'archived'
-                ? 'Could not load the Microsoft Archive.'
-                : 'Could not load the Microsoft Inbox.',
+              : folder === 'drafts'
+                ? 'Could not load Microsoft Drafts.'
+                : folder === 'archived'
+                  ? 'Could not load the Microsoft Archive.'
+                  : 'Could not load the Microsoft Inbox.',
         },
         {
           status: 502,
@@ -253,14 +266,17 @@ export async function GET(
            * Show the first person who received it.
            */
           const displayAddress =
-            folder === 'sent'
+            folder === 'sent' ||
+            folder === 'drafts'
               ? firstRecipient
               : senderAddress;
 
           const displayDate =
             folder === 'sent'
               ? message.sentDateTime
-              : message.receivedDateTime;
+              : folder === 'drafts'
+                ? message.lastModifiedDateTime
+                : message.receivedDateTime;
 
           return {
             id:
@@ -276,8 +292,9 @@ export async function GET(
               displayAddress?.name?.trim() ||
               displayAddress?.address?.trim() ||
               (
-                folder === 'sent'
-                  ? 'Unknown recipient'
+                folder === 'sent' ||
+                folder === 'drafts'
+                  ? 'No recipient'
                   : 'Unknown sender'
               ),
 
@@ -294,7 +311,8 @@ export async function GET(
              * Sent messages are displayed as read.
              */
             isRead:
-              folder === 'sent'
+              folder === 'sent' ||
+              folder === 'drafts'
                 ? true
                 : Boolean(
                     message.isRead,

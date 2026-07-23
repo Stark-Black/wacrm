@@ -35,6 +35,7 @@ import { useCan } from '@/hooks/use-can';
 type EmailFolder =
   | 'inbox'
   | 'sent'
+  | 'drafts'
   | 'archived';
 
 
@@ -569,9 +570,11 @@ const [
           (
             activeFolder === 'sent'
               ? 'Could not load Microsoft Sent Items.'
-              : activeFolder === 'archived'
-                ? 'Could not load Microsoft Archive.'
-                : 'Could not load the Microsoft Inbox.'
+              : activeFolder === 'drafts'
+                ? 'Could not load Microsoft Drafts.'
+                : activeFolder === 'archived'
+                  ? 'Could not load Microsoft Archive.'
+                  : 'Could not load the Microsoft Inbox.'
           ),
         );
       }
@@ -1315,7 +1318,7 @@ async function handleSendMessage() {
     name: 'Drafts',
     icon: FileText,
     count: 0,
-    enabled: false,
+    enabled: true,
   },
   {
     id: 'archived',
@@ -1338,7 +1341,9 @@ async function handleSendMessage() {
             ? 'Email Inbox'
             : activeFolder === 'sent'
               ? 'Sent Emails'
-              : 'Archived Emails'}
+              : activeFolder === 'drafts'
+                ? 'Email Drafts'
+                : 'Archived Emails'}
           </h1>
           </div>
 
@@ -1695,11 +1700,12 @@ async function handleSendMessage() {
                     if (
                       folder.id === 'inbox' ||
                       folder.id === 'sent' ||
+                      folder.id === 'drafts' ||
                       folder.id === 'archived'
-                  ) {
-                    setActiveFolder(folder.id);
-                  }
-                  }}
+                    ) {
+                      setActiveFolder(folder.id);
+                    }
+                    }}
                   className={`
                   flex w-full items-center gap-3
                   rounded-lg px-3 py-2
@@ -1771,7 +1777,9 @@ async function handleSendMessage() {
                     ? 'Search Inbox...'
                     : activeFolder === 'sent'
                       ? 'Search Sent emails...'
-                      : 'Search Archived emails...'
+                      : activeFolder === 'drafts'
+                        ? 'Search Drafts...'
+                        : 'Search Archived emails...'
                 }
                 value={search}
                 onChange={(event) =>
@@ -1816,9 +1824,11 @@ async function handleSendMessage() {
 
                   <p className="mt-3 text-sm text-muted-foreground">
                     {activeFolder === 'inbox'
-                      ? 'Loading Microsoft Inbox...'
-                      : activeFolder === 'sent'
-                        ? 'Loading Microsoft Sent Items...'
+                    ? 'Loading Microsoft Inbox...'
+                    : activeFolder === 'sent'
+                      ? 'Loading Microsoft Sent Items...'
+                      : activeFolder === 'drafts'
+                        ? 'Loading Microsoft Drafts...'
                         : 'Loading Microsoft Archive...'}
                   </p>
                 </div>
@@ -1928,9 +1938,10 @@ async function handleSendMessage() {
                                 }
                               `}
                             >
-                              {activeFolder === 'sent'
-                                ? `To: ${message.fromName}`
-                                : message.fromName}
+                              {activeFolder === 'sent' ||
+                                activeFolder === 'drafts'
+                                  ? `To: ${message.fromName}`
+                                  : message.fromName}
                             </p>
 
                             <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -2071,34 +2082,36 @@ async function handleSendMessage() {
       </button>
     ) : null}
 
+  {activeFolder !== 'drafts' ? (
   <button
-  type="button"
-  onClick={() => {
-    setReplyOpen(false);
-    setReplyText('');
+    type="button"
+    onClick={() => {
+      setReplyOpen(false);
+      setReplyText('');
 
-    setForwardOpen(true);
-  }}
-  disabled={
-    !canSendMessages ||
-    loadingMessage ||
-    !selectedMessageDetail
-  }
-  className="
-    inline-flex h-9 items-center
-    justify-center gap-2 rounded-md
-    border border-border
-    bg-background px-3
-    text-sm font-medium text-foreground
-    transition-colors
-    hover:bg-muted
-    disabled:cursor-not-allowed
-    disabled:opacity-50
-  "
->
-  <Forward className="size-4" />
-  Forward
-</button>
+      setForwardOpen(true);
+    }}
+    disabled={
+      !canSendMessages ||
+      loadingMessage ||
+      !selectedMessageDetail
+    }
+    className="
+      inline-flex h-9 items-center
+      justify-center gap-2 rounded-md
+      border border-border
+      bg-background px-3
+      text-sm font-medium text-foreground
+      transition-colors
+      hover:bg-muted
+      disabled:cursor-not-allowed
+      disabled:opacity-50
+    "
+  >
+    <Forward className="size-4" />
+    Forward
+  </button>
+    ) : null}
 
   {activeFolder === 'inbox' ? (
   <button
@@ -2792,7 +2805,9 @@ async function handleSendMessage() {
             ? 'Choose a message from the Inbox to read its complete content.'
             : activeFolder === 'sent'
               ? 'Choose a sent message to read its complete content.'
-              : 'Choose an archived message to read its complete content.'}
+              : activeFolder === 'drafts'
+                ? 'Choose a draft to review its saved content.'
+                : 'Choose an archived message to read its complete content.'}
         </p>
       </div>
     </div>
