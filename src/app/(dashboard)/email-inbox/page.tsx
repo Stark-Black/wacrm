@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import {
+  type ChangeEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -416,6 +417,14 @@ function extractCloudLinks(
   };
 }
 
+const COMPOSE_MAX_FILES = 5;
+
+const COMPOSE_MAX_FILE_BYTES =
+  2_900_000;
+
+const COMPOSE_MAX_TOTAL_BYTES =
+  12_000_000;
+
 
 
 export default function EmailInboxPage() {
@@ -519,6 +528,15 @@ const [
   composeBody,
   setComposeBody,
 ] = useState('');
+
+
+const [
+  composeFiles,
+  setComposeFiles,
+] = useState<File[]>([]);
+
+
+
 
 const [
   sendingMessage,
@@ -1163,6 +1181,7 @@ function resetComposeForm() {
   setComposeCc('');
   setComposeSubject('');
   setComposeBody('');
+  setComposeFiles([]);
 }
 
 function closeCompose() {
@@ -1173,6 +1192,123 @@ function closeCompose() {
   setComposeOpen(false);
   resetComposeForm();
 }
+
+
+
+
+
+
+function handleComposeFilesSelected(
+  event: ChangeEvent<HTMLInputElement>,
+) {
+  const incomingFiles =
+    Array.from(
+      event.target.files ?? [],
+    );
+
+  /*
+   * Permite seleccionar nuevamente el mismo
+   * archivo después de quitarlo.
+   */
+  event.target.value = '';
+
+  if (incomingFiles.length === 0) {
+    return;
+  }
+
+  const oversizedFile =
+    incomingFiles.find(
+      (file) =>
+        file.size >
+        COMPOSE_MAX_FILE_BYTES,
+    );
+
+  if (oversizedFile) {
+    toast.error(
+      `${oversizedFile.name} is larger than 2.9 MB.`,
+    );
+
+    return;
+  }
+
+  const existingFiles =
+    new Set(
+      composeFiles.map(
+        (file) =>
+          `${file.name}:${file.size}:${file.lastModified}`,
+      ),
+    );
+
+  const uniqueNewFiles =
+    incomingFiles.filter(
+      (file) => {
+        const fileKey =
+          `${file.name}:${file.size}:${file.lastModified}`;
+
+        if (existingFiles.has(fileKey)) {
+          return false;
+        }
+
+        existingFiles.add(fileKey);
+        return true;
+      },
+    );
+
+  const nextFiles = [
+    ...composeFiles,
+    ...uniqueNewFiles,
+  ];
+
+  if (
+    nextFiles.length >
+    COMPOSE_MAX_FILES
+  ) {
+    toast.error(
+      `A maximum of ${COMPOSE_MAX_FILES} files is allowed.`,
+    );
+
+    return;
+  }
+
+  const totalBytes =
+    nextFiles.reduce(
+      (total, file) =>
+        total + file.size,
+      0,
+    );
+
+  if (
+    totalBytes >
+    COMPOSE_MAX_TOTAL_BYTES
+  ) {
+    toast.error(
+      'The combined attachment size cannot exceed 12 MB.',
+    );
+
+    return;
+  }
+
+  setComposeFiles(nextFiles);
+}
+
+function removeComposeFile(
+  fileIndex: number,
+) {
+  if (sendingMessage) {
+    return;
+  }
+
+  setComposeFiles(
+    (currentFiles) =>
+      currentFiles.filter(
+        (_, index) =>
+          index !== fileIndex,
+      ),
+  );
+}
+
+
+
 
 async function handleSendMessage() {
   if (!canSendMessages) {
@@ -1216,38 +1352,63 @@ async function handleSendMessage() {
   setSendingMessage(true);
 
   try {
+    const formData =
+      new FormData();
+
+    toRecipients.forEach(
+      (address) => {
+        formData.append(
+          'to',
+          address,
+        );
+      },
+    );
+
+    ccRecipients.forEach(
+      (address) => {
+        formData.append(
+          'cc',
+          address,
+        );
+      },
+    );
+
+    formData.append(
+      'subject',
+      composeSubject.trim(),
+    );
+
+    formData.append(
+      'body',
+      composeBody.trim(),
+    );
+
+    composeFiles.forEach(
+      (file) => {
+        formData.append(
+          'files',
+          file,
+          file.name,
+        );
+      },
+    );
+
     const response =
       await fetch(
         '/api/email/send',
         {
           method: 'POST',
-
-          headers: {
-            'Content-Type':
-              'application/json',
-          },
-
-          body: JSON.stringify({
-            to:
-              toRecipients,
-
-            cc:
-              ccRecipients,
-
-            subject:
-              composeSubject.trim(),
-
-            body:
-              composeBody.trim(),
-          }),
+          body: formData,
         },
       );
+        
 
     const payload =
-      (await response.json()) as {
-        success?: boolean;
-        error?: string;
-      };
+    (await response.json()) as {
+      success?: boolean;
+      attachmentCount?: number;
+      error?: string;
+    };
 
     if (
       !response.ok ||
@@ -1606,6 +1767,121 @@ async function handleSendMessage() {
         />
       </div>
     </div>
+
+
+
+
+
+
+
+          <div className="grid gap-2">
+        <span className="text-sm font-medium text-foreground">
+          Attachments
+        </span>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label
+            htmlFor="compose-files"
+            className="
+              inline-flex h-9 cursor-pointer
+              items-center justify-center
+              gap-2 rounded-md border
+              border-border bg-background
+              px-4 text-sm font-medium
+              text-foreground
+              transition-colors
+              hover:bg-muted
+            "
+          >
+            <Paperclip className="size-4" />
+            Attach files
+          </label>
+
+          <input
+            id="compose-files"
+            type="file"
+            multiple
+            onChange={
+              handleComposeFilesSelected
+            }
+            disabled={sendingMessage}
+            className="sr-only"
+          />
+
+          <p className="text-xs text-muted-foreground">
+            Up to 5 files, 2.9 MB each.
+          </p>
+        </div>
+
+        {composeFiles.length > 0 ? (
+          <div className="mt-2 grid gap-2">
+            {composeFiles.map(
+              (file, index) => (
+                <div
+                  key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                  className="
+                    flex items-center
+                    justify-between gap-3
+                    rounded-lg border
+                    border-border
+                    bg-muted/20 p-3
+                  "
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div
+                      className="
+                        flex size-9 shrink-0
+                        items-center justify-center
+                        rounded-md bg-primary/10
+                        text-primary
+                      "
+                    >
+                      <Paperclip className="size-4" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {file.name}
+                      </p>
+
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {formatFileSize(
+                          file.size,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      removeComposeFile(
+                        index,
+                      )
+                    }
+                    disabled={sendingMessage}
+                    className="
+                      inline-flex size-8
+                      shrink-0 items-center
+                      justify-center
+                      rounded-md
+                      text-muted-foreground
+                      transition-colors
+                      hover:bg-muted
+                      hover:text-foreground
+                      disabled:opacity-50
+                    "
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              ),
+            )}
+          </div>
+        ) : null}
+      </div>
+
 
     <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs text-muted-foreground">

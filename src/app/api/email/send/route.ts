@@ -14,13 +14,6 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-interface SendEmailRequestBody {
-  to?: string[];
-  cc?: string[];
-  subject?: string;
-  body?: string;
-}
-
 type AuthenticationResult =
   | {
       accountId: string;
@@ -29,29 +22,72 @@ type AuthenticationResult =
       response: NextResponse;
     };
 
+interface GraphDraftMessage {
+  id?: string | null;
+}
+
 const EMAIL_PATTERN =
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function normalizeRecipients(
-  value: unknown,
-): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+/*
+ * Microsoft Graph accepts direct file
+ * attachments smaller than 3 MB.
+ *
+ * We use 2.9 MB as a safe limit.
+ */
+const MAX_FILES = 5;
 
-  const addresses = value
-    .filter(
-      (item): item is string =>
-        typeof item === 'string',
-    )
-    .map((item) =>
-      item.trim().toLowerCase(),
-    )
-    .filter(Boolean);
+const MAX_FILE_BYTES =
+  2_900_000;
+
+const MAX_TOTAL_FILE_BYTES =
+  12_000_000;
+
+function normalizeRecipients(
+  values: unknown[],
+): string[] {
+  const addresses =
+    values
+      .filter(
+        (item): item is string =>
+          typeof item === 'string',
+      )
+      .map((item) =>
+        item.trim().toLowerCase(),
+      )
+      .filter(Boolean);
 
   return Array.from(
     new Set(addresses),
   );
+}
+
+function getTextField(
+  formData: FormData,
+  fieldName: string,
+): string {
+  const value =
+    formData.get(fieldName);
+
+  return typeof value === 'string'
+    ? value.trim()
+    : '';
+}
+
+function createSafeFilename(
+  value: string,
+): string {
+  const safeName =
+    value
+      .replace(/[\r\n"]/g, '_')
+      .replace(
+        /[<>:"/\\|?*\u0000-\u001F]/g,
+        '_',
+      )
+      .trim()
+      .slice(0, 180);
+
+  return safeName || 'attachment';
 }
 
 async function getAuthenticatedAccount():
@@ -82,7 +118,9 @@ async function getAuthenticatedAccount():
     error: profileError,
   } = await supabase
     .from('profiles')
-    .select('account_id, account_role')
+    .select(
+      'account_id, account_role',
+    )
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -104,7 +142,9 @@ async function getAuthenticatedAccount():
   }
 
   const role =
-    profile.account_role as string | null;
+    profile.account_role as
+      | string
+      | null;
 
   const canSend =
     role === 'owner' ||
@@ -131,16 +171,59 @@ async function getAuthenticatedAccount():
   };
 }
 
+async function deleteIncompleteDraft(
+  accessToken: string,
+  draftId: string,
+) {
+  try {
+    const response =
+      await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(
+          draftId,
+        )}`,
+        {
+          method: 'DELETE',
+
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+
+          cache: 'no-store',
+        },
+      );
+
+    if (
+      !response.ok &&
+      response.status !== 404
+    ) {
+      const graphError =
+        await response.text();
+
+      console.error(
+        'Could not delete incomplete Microsoft draft:',
+        response.status,
+        graphError,
+      );
+    }
+  } catch (cleanupError) {
+    console.error(
+      'Microsoft draft cleanup failed:',
+      cleanupError,
+    );
+  }
+}
+
 /**
  * POST /api/email/send
  *
- * Body:
- * {
- *   "to": ["customer@example.com"],
- *   "cc": [],
- *   "subject": "Subject",
- *   "body": "Message content"
- * }
+ * Uses multipart/form-data:
+ *
+ * to: recipient@example.com
+ * cc: optional@example.com
+ * subject: Subject
+ * body: Message
+ * files: File
  */
 export async function POST(
   request: NextRequest,
@@ -153,16 +236,16 @@ export async function POST(
       return authentication.response;
     }
 
-    let requestBody: SendEmailRequestBody;
+    let formData: FormData;
 
     try {
-      requestBody =
-        (await request.json()) as
-          SendEmailRequestBody;
+      formData =
+        await request.formData();
     } catch {
       return NextResponse.json(
         {
-          error: 'Invalid request body.',
+          error:
+            'Invalid email form data.',
         },
         {
           status: 400,
@@ -172,19 +255,34 @@ export async function POST(
 
     const toRecipients =
       normalizeRecipients(
-        requestBody.to,
+        formData.getAll('to'),
       );
 
     const ccRecipients =
       normalizeRecipients(
-        requestBody.cc,
+        formData.getAll('cc'),
       );
 
     const subject =
-      requestBody.subject?.trim() ?? '';
+      getTextField(
+        formData,
+        'subject',
+      );
 
     const messageBody =
-      requestBody.body?.trim() ?? '';
+      getTextField(
+        formData,
+        'body',
+      );
+
+    const files =
+      formData
+        .getAll('files')
+        .filter(
+          (entry): entry is File =>
+            typeof entry !== 'string' &&
+            entry.size > 0,
+        );
 
     if (toRecipients.length === 0) {
       return NextResponse.json(
@@ -269,11 +367,67 @@ export async function POST(
       );
     }
 
-    if (messageBody.length > 100_000) {
+    if (
+      messageBody.length >
+      100_000
+    ) {
       return NextResponse.json(
         {
           error:
             'The email message is too long.',
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (files.length > MAX_FILES) {
+      return NextResponse.json(
+        {
+          error:
+            `A maximum of ${MAX_FILES} files is allowed.`,
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const oversizedFile =
+      files.find(
+        (file) =>
+          file.size >
+          MAX_FILE_BYTES,
+      );
+
+    if (oversizedFile) {
+      return NextResponse.json(
+        {
+          error:
+            `${oversizedFile.name} is larger than 2.9 MB.`,
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const totalFileBytes =
+      files.reduce(
+        (total, file) =>
+          total + file.size,
+        0,
+      );
+
+    if (
+      totalFileBytes >
+      MAX_TOTAL_FILE_BYTES
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The combined attachment size cannot exceed 12 MB.',
         },
         {
           status: 400,
@@ -287,30 +441,38 @@ export async function POST(
       authentication.accountId,
     );
 
-    const graphResponse =
-      await fetch(
-        'https://graph.microsoft.com/v1.0/me/sendMail',
-        {
-          method: 'POST',
+    let draftId:
+      | string
+      | null = null;
 
-          headers: {
-            Authorization:
-              `Bearer ${accessToken}`,
+    try {
+      /*
+       * 1. Create a temporary Microsoft 365 draft.
+       */
+      const draftResponse =
+        await fetch(
+          'https://graph.microsoft.com/v1.0/me/messages',
+          {
+            method: 'POST',
 
-            Accept:
-              'application/json',
+            headers: {
+              Authorization:
+                `Bearer ${accessToken}`,
 
-            'Content-Type':
-              'application/json',
-          },
+              Accept:
+                'application/json',
 
-          body: JSON.stringify({
-            message: {
+              'Content-Type':
+                'application/json',
+            },
+
+            body: JSON.stringify({
               subject,
 
               body: {
                 contentType: 'Text',
-                content: messageBody,
+                content:
+                  messageBody,
               },
 
               toRecipients:
@@ -330,44 +492,188 @@ export async function POST(
                     },
                   }),
                 ),
+            }),
+
+            cache: 'no-store',
+          },
+        );
+
+      if (
+        !draftResponse.ok ||
+        draftResponse.status !== 201
+      ) {
+        const graphError =
+          await draftResponse.text();
+
+        console.error(
+          'Microsoft Graph draft creation failed:',
+          draftResponse.status,
+          graphError,
+        );
+
+        throw new Error(
+          'Microsoft could not create the temporary email draft.',
+        );
+      }
+
+      const draft =
+        (await draftResponse.json()) as
+          GraphDraftMessage;
+
+      draftId =
+        draft.id?.trim() ?? null;
+
+      if (!draftId) {
+        throw new Error(
+          'Microsoft did not return a draft identifier.',
+        );
+      }
+
+      /*
+       * 2. Add each selected file to the draft.
+       *
+       * Files are converted to Base64 only in
+       * server memory and are never inserted
+       * into Supabase.
+       */
+      for (const file of files) {
+        const fileBuffer =
+          Buffer.from(
+            await file.arrayBuffer(),
+          );
+
+        const attachmentResponse =
+          await fetch(
+            `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(
+              draftId,
+            )}/attachments`,
+            {
+              method: 'POST',
+
+              headers: {
+                Authorization:
+                  `Bearer ${accessToken}`,
+
+                Accept:
+                  'application/json',
+
+                'Content-Type':
+                  'application/json',
+              },
+
+              body: JSON.stringify({
+                '@odata.type':
+                  '#microsoft.graph.fileAttachment',
+
+                name:
+                  createSafeFilename(
+                    file.name,
+                  ),
+
+                contentType:
+                  file.type ||
+                  'application/octet-stream',
+
+                contentBytes:
+                  fileBuffer.toString(
+                    'base64',
+                  ),
+              }),
+
+              cache: 'no-store',
+            },
+          );
+
+        if (
+          !attachmentResponse.ok ||
+          attachmentResponse.status !==
+            201
+        ) {
+          const graphError =
+            await attachmentResponse.text();
+
+          console.error(
+            'Microsoft Graph attachment upload failed:',
+            file.name,
+            attachmentResponse.status,
+            graphError,
+          );
+
+          throw new Error(
+            `Microsoft could not attach ${file.name}.`,
+          );
+        }
+      }
+
+      /*
+       * 3. Send the completed Microsoft draft.
+       */
+      const sendResponse =
+        await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(
+            draftId,
+          )}/send`,
+          {
+            method: 'POST',
+
+            headers: {
+              Authorization:
+                `Bearer ${accessToken}`,
             },
 
-            saveToSentItems: true,
-          }),
+            cache: 'no-store',
+          },
+        );
 
-          cache: 'no-store',
-        },
-      );
+      if (
+        !sendResponse.ok ||
+        sendResponse.status !== 202
+      ) {
+        const graphError =
+          await sendResponse.text();
 
-    if (
-      !graphResponse.ok ||
-      graphResponse.status !== 202
-    ) {
-      const graphError =
-        await graphResponse.text();
+        console.error(
+          'Microsoft Graph draft send failed:',
+          sendResponse.status,
+          graphError,
+        );
 
-      console.error(
-        'Microsoft Graph sendMail failed:',
-        graphResponse.status,
-        graphError,
-      );
+        throw new Error(
+          'Microsoft could not send the email.',
+        );
+      }
 
-      return NextResponse.json(
-        {
-          error:
-            'Microsoft could not send the email.',
-        },
-        {
-          status: 502,
-        },
-      );
+      /*
+       * The draft was accepted for sending.
+       * It must no longer be deleted.
+       */
+      draftId = null;
+
+      return NextResponse.json({
+        success: true,
+
+        attachmentCount:
+          files.length,
+
+        message:
+          files.length > 0
+            ? 'Email and attachments accepted by Microsoft 365.'
+            : 'Email accepted by Microsoft 365.',
+      });
+    } catch (graphOperationError) {
+      /*
+       * Remove an incomplete draft when file
+       * upload or sending fails.
+       */
+      if (draftId) {
+        await deleteIncompleteDraft(
+          accessToken,
+          draftId,
+        );
+      }
+
+      throw graphOperationError;
     }
-
-    return NextResponse.json({
-      success: true,
-      message:
-        'Email accepted by Microsoft 365.',
-    });
   } catch (error) {
     console.error(
       'Email send API failed:',
