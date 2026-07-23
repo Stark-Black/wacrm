@@ -32,7 +32,10 @@ import { toast } from 'sonner';
 import { useCan } from '@/hooks/use-can';
 
 
-type EmailFolder = 'inbox' | 'sent';
+type EmailFolder =
+  | 'inbox'
+  | 'sent'
+  | 'archived';
 
 
 interface EmailMessage {
@@ -485,6 +488,10 @@ const [
   setForwardingMessage,
 ] = useState(false);
 
+const [
+  movingMessage,
+  setMovingMessage,
+] = useState(false);
 
 
 const [
@@ -559,11 +566,13 @@ const [
       if (!response.ok) {
         throw new Error(
           payload.error ||
-            (
-              activeFolder === 'sent'
-                ? 'Could not load Microsoft Sent Items.'
+          (
+            activeFolder === 'sent'
+              ? 'Could not load Microsoft Sent Items.'
+              : activeFolder === 'archived'
+                ? 'Could not load Microsoft Archive.'
                 : 'Could not load the Microsoft Inbox.'
-            ),
+          ),
         );
       }
 
@@ -617,18 +626,22 @@ const [
 );
 
   useEffect(() => {
-  setSearch('');
-  setSelectedMessageId(null);
-  setSelectedMessageDetail(null);
-  setMessageError(null);
+    setSearch('');
+    setSelectedMessageId(null);
+    setSelectedMessageDetail(null);
+    setMessageError(null);
 
-  setReplyOpen(false);
-  setReplyText('');
+    setReplyOpen(false);
+    setReplyText('');
 
-  setForwardOpen(false);
-  setForwardTo('');
-  setForwardComment('');
-}, [activeFolder]);
+    setForwardOpen(false);
+    setForwardTo('');
+    setForwardComment('');
+  }, [activeFolder]);
+
+  useEffect(() => {
+    void loadMessages();
+  }, [loadMessages]);
 
 
   useEffect(() => {
@@ -1032,6 +1045,113 @@ async function handleForwardMessage() {
 }
 
 
+async function handleMoveSelectedMessage() {
+  if (
+    !selectedMessageId ||
+    !selectedMessageDetail
+  ) {
+    toast.error(
+      'Select an email before moving it.',
+    );
+
+    return;
+  }
+
+  if (
+    activeFolder !== 'inbox' &&
+    activeFolder !== 'archived'
+  ) {
+    return;
+  }
+
+  const destination:
+    | 'archive'
+    | 'inbox' =
+    activeFolder === 'inbox'
+      ? 'archive'
+      : 'inbox';
+
+  setMovingMessage(true);
+
+  try {
+    const response =
+      await fetch(
+        '/api/email/move',
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+
+          body: JSON.stringify({
+            id:
+              selectedMessageId,
+
+            destination,
+          }),
+        },
+      );
+
+    const payload =
+      (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+    if (
+      !response.ok ||
+      !payload.success
+    ) {
+      throw new Error(
+        payload.error ||
+          (
+            destination === 'archive'
+              ? 'Could not archive the email.'
+              : 'Could not restore the email.'
+          ),
+      );
+    }
+
+    setReplyOpen(false);
+    setReplyText('');
+
+    setForwardOpen(false);
+    setForwardTo('');
+    setForwardComment('');
+
+    setSelectedMessageId(null);
+    setSelectedMessageDetail(null);
+    setMessageError(null);
+
+    toast.success(
+      payload.message ||
+        (
+          destination === 'archive'
+            ? 'Email archived successfully.'
+            : 'Email restored to the Inbox.'
+        ),
+    );
+
+    await loadMessages(true);
+  } catch (moveError) {
+    console.error(
+      'Failed to move email:',
+      moveError,
+    );
+
+    toast.error(
+      moveError instanceof Error
+        ? moveError.message
+        : 'Could not move the email.',
+    );
+  } finally {
+    setMovingMessage(false);
+  }
+}
+
 
 
 
@@ -1202,7 +1322,7 @@ async function handleSendMessage() {
     name: 'Archived',
     icon: Archive,
     count: 0,
-    enabled: false,
+    enabled: true,
   },
 ] as const;
 
@@ -1215,15 +1335,19 @@ async function handleSendMessage() {
 
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
             {activeFolder === 'inbox'
-              ? 'Email Inbox'
-              : 'Sent Emails'}
+            ? 'Email Inbox'
+            : activeFolder === 'sent'
+              ? 'Sent Emails'
+              : 'Archived Emails'}
           </h1>
           </div>
 
           <p className="mt-1 text-sm text-muted-foreground">
           {activeFolder === 'inbox'
             ? 'View and reply to messages received in the company mailbox.'
-            : 'View messages sent from the company Microsoft 365 mailbox.'}
+            : activeFolder === 'sent'
+              ? 'View messages sent from the company Microsoft 365 mailbox.'
+              : 'View archived messages and restore them to the Inbox.'}
         </p>
         </div>
 
@@ -1570,10 +1694,11 @@ async function handleSendMessage() {
                   onClick={() => {
                     if (
                       folder.id === 'inbox' ||
-                      folder.id === 'sent'
-                    ) {
-                      setActiveFolder(folder.id);
-                    }
+                      folder.id === 'sent' ||
+                      folder.id === 'archived'
+                  ) {
+                    setActiveFolder(folder.id);
+                  }
                   }}
                   className={`
                   flex w-full items-center gap-3
@@ -1644,7 +1769,9 @@ async function handleSendMessage() {
                 placeholder={
                   activeFolder === 'inbox'
                     ? 'Search Inbox...'
-                    : 'Search Sent emails...'
+                    : activeFolder === 'sent'
+                      ? 'Search Sent emails...'
+                      : 'Search Archived emails...'
                 }
                 value={search}
                 onChange={(event) =>
@@ -1688,7 +1815,11 @@ async function handleSendMessage() {
                   <Loader2 className="mx-auto size-6 animate-spin text-primary" />
 
                   <p className="mt-3 text-sm text-muted-foreground">
-                    Loading Microsoft Inbox...
+                    {activeFolder === 'inbox'
+                      ? 'Loading Microsoft Inbox...'
+                      : activeFolder === 'sent'
+                        ? 'Loading Microsoft Sent Items...'
+                        : 'Loading Microsoft Archive...'}
                   </p>
                 </div>
               </div>
@@ -1894,6 +2025,51 @@ async function handleSendMessage() {
       Attachment
     </div>
   ) : null}
+
+
+
+
+  {activeFolder === 'inbox' ||
+    activeFolder === 'archived' ? (
+      <button
+        type="button"
+        onClick={() =>
+          void handleMoveSelectedMessage()
+        }
+        disabled={
+          movingMessage ||
+          loadingMessage ||
+          !selectedMessageDetail
+        }
+        className="
+          inline-flex h-9 items-center
+          justify-center gap-2 rounded-md
+          border border-border
+          bg-background px-3
+          text-sm font-medium text-foreground
+          transition-colors
+          hover:bg-muted
+          disabled:cursor-not-allowed
+          disabled:opacity-50
+        "
+      >
+        {movingMessage ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : activeFolder === 'inbox' ? (
+          <Archive className="size-4" />
+        ) : (
+          <Inbox className="size-4" />
+        )}
+
+        {movingMessage
+          ? activeFolder === 'inbox'
+            ? 'Archiving...'
+            : 'Restoring...'
+          : activeFolder === 'inbox'
+            ? 'Archive'
+            : 'Move to Inbox'}
+      </button>
+    ) : null}
 
   <button
   type="button"
@@ -2612,8 +2788,11 @@ async function handleSendMessage() {
         </h2>
 
         <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-          Choose a message from the Inbox to
-          read its complete content.
+          {activeFolder === 'inbox'
+            ? 'Choose a message from the Inbox to read its complete content.'
+            : activeFolder === 'sent'
+              ? 'Choose a sent message to read its complete content.'
+              : 'Choose an archived message to read its complete content.'}
         </p>
       </div>
     </div>

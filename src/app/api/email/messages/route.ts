@@ -18,7 +18,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type EmailFolder = 'inbox' | 'sent';
+type EmailFolder =  | 'inbox'  | 'sent'  | 'archived';
 
 interface GraphEmailAddress {
   name?: string | null;
@@ -62,9 +62,10 @@ export async function GET(
       'inbox';
 
     if (
-      requestedFolder !== 'inbox' &&
-      requestedFolder !== 'sent'
-    ) {
+        requestedFolder !== 'inbox' &&
+        requestedFolder !== 'sent' &&
+        requestedFolder !== 'archived'
+        ) {
       return NextResponse.json(
         {
           error:
@@ -135,7 +136,9 @@ export async function GET(
     const microsoftFolder =
       folder === 'sent'
         ? 'sentitems'
-        : 'inbox';
+        : folder === 'archived'
+          ? 'archive'
+          : 'inbox';
 
     const orderByField =
       folder === 'sent'
@@ -218,7 +221,9 @@ export async function GET(
           error:
             folder === 'sent'
               ? 'Could not load Microsoft Sent Items.'
-              : 'Could not load the Microsoft Inbox.',
+              : folder === 'archived'
+                ? 'Could not load the Microsoft Archive.'
+                : 'Could not load the Microsoft Inbox.',
         },
         {
           status: 502,
