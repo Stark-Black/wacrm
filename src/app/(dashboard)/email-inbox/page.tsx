@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import {
   type ChangeEvent,
+  type SyntheticEvent,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -783,6 +785,15 @@ const [
 ] = useState(false);
 
 
+const [
+  emailFrameHeight,
+  setEmailFrameHeight,
+] = useState(560);
+
+const emailFrameObserverRef =
+  useRef<ResizeObserver | null>(
+    null,
+  );
 
 
 const [
@@ -1125,8 +1136,6 @@ const [
 
 
 useEffect(() => {
-  setShowExternalImages(false);
-
   setReplyOpen(false);
   setReplyText('');
 
@@ -1134,9 +1143,29 @@ useEffect(() => {
   setForwardTo('');
   setForwardComment('');
 
-
   setAllowExternalEmailImages(false);
+  setEmailFrameHeight(560);
+
+  emailFrameObserverRef.current
+    ?.disconnect();
+
+  emailFrameObserverRef.current =
+    null;
+
+  return () => {
+    emailFrameObserverRef.current
+      ?.disconnect();
+
+    emailFrameObserverRef.current =
+      null;
+  };
 }, [selectedMessageId]);
+
+
+
+
+
+
 
   const filteredMessages =
     useMemo(() => {
@@ -1220,6 +1249,120 @@ useEffect(() => {
     selectedMessageDetail,
     allowExternalEmailImages,
   ]);
+
+
+
+
+  function handleEmailFrameLoad(
+  event:
+    SyntheticEvent<HTMLIFrameElement>,
+) {
+  const iframe =
+    event.currentTarget;
+
+  emailFrameObserverRef.current
+    ?.disconnect();
+
+  const frameDocument =
+    iframe.contentDocument;
+
+  if (!frameDocument) {
+    return;
+  }
+
+  /*
+   * Guardamos referencias no nulas para
+   * utilizarlas dentro de la función interna.
+   */
+  const documentElement =
+    frameDocument.documentElement;
+
+  const frameBody =
+    frameDocument.body;
+
+  function updateFrameHeight() {
+    const documentHeight =
+      Math.max(
+        documentElement.scrollHeight,
+
+        frameBody?.scrollHeight ??
+          0,
+
+        documentElement.offsetHeight,
+
+        frameBody?.offsetHeight ??
+          0,
+      );
+
+    const nextHeight =
+      Math.min(
+        7000,
+        Math.max(
+          360,
+          Math.ceil(
+            documentHeight,
+          ) + 4,
+        ),
+      );
+
+    setEmailFrameHeight(
+      nextHeight,
+    );
+  }
+
+  updateFrameHeight();
+
+  if (
+    typeof ResizeObserver !==
+    'undefined'
+  ) {
+    const observer =
+      new ResizeObserver(() => {
+        updateFrameHeight();
+      });
+
+    observer.observe(
+      documentElement,
+    );
+
+    if (frameBody) {
+      observer.observe(
+        frameBody,
+      );
+    }
+
+    emailFrameObserverRef.current =
+      observer;
+  }
+
+  Array.from(
+    frameDocument.images,
+  ).forEach((image) => {
+    if (image.complete) {
+      return;
+    }
+
+    image.addEventListener(
+      'load',
+      updateFrameHeight,
+      {
+        once: true,
+      },
+    );
+
+    image.addEventListener(
+      'error',
+      updateFrameHeight,
+      {
+        once: true,
+      },
+    );
+  });
+}
+
+
+
+  
 
 
 
@@ -3669,10 +3812,17 @@ displayedMessageContent
         allow-popups-to-escape-sandbox
       "
       referrerPolicy="no-referrer"
+      onLoad={handleEmailFrameLoad}
+      style={{
+        height:
+          `${emailFrameHeight}px`,
+      }}
       className="
-        min-h-[560px] w-full
-        rounded-lg border
-        border-border bg-white
+        w-full rounded-lg
+        border border-border
+        bg-white
+        transition-[height]
+        duration-200
       "
     />
   </div>
