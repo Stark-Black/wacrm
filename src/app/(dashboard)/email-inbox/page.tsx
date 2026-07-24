@@ -33,7 +33,13 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCan } from '@/hooks/use-can';
-
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 type EmailFolder =
   | 'inbox'
@@ -2053,10 +2059,8 @@ async function handleSendMessage() {
           <button
             type="button"
             onClick={() =>
-              setComposeOpen(
-                (current) => !current,
-              )
-            }
+            setComposeOpen(true)
+          }
             disabled={!canSendMessages}
             className="
               inline-flex h-9 items-center
@@ -2116,47 +2120,50 @@ async function handleSendMessage() {
         </div>
       </div>
 
-      {composeOpen ? (
-  <section
+
+
+    <Dialog
+  open={composeOpen}
+  onOpenChange={(open) => {
+    if (sendingMessage) {
+      return;
+    }
+
+    if (open) {
+      setComposeOpen(true);
+      return;
+    }
+
+    closeCompose();
+  }}
+>
+  <DialogContent
     className="
-      rounded-xl border
-      border-primary/30
-      bg-card p-5
-      shadow-sm
+      max-h-[90vh]
+      w-[calc(100vw-2rem)]
+      overflow-y-auto
+      overscroll-contain
+      border-border
+      bg-popover
+      text-popover-foreground
+      sm:max-w-4xl
     "
   >
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">
-          New email
-        </h2>
+    <DialogHeader>
+      <DialogTitle className="text-popover-foreground">
+        New email
+      </DialogTitle>
 
-        <p className="mt-1 text-sm text-muted-foreground">
-          Send a new message from the connected
-          Microsoft 365 mailbox.
-        </p>
-      </div>
+      <DialogDescription className="text-muted-foreground">
+        Send a new message from the connected
+        Microsoft 365 mailbox.
+      </DialogDescription>
+    </DialogHeader>
 
-      <button
-        type="button"
-        onClick={closeCompose}
-        disabled={sendingMessage}
-        className="
-          inline-flex size-8
-          items-center justify-center
-          rounded-md text-muted-foreground
-          transition-colors
-          hover:bg-muted
-          hover:text-foreground
-          disabled:opacity-50
-        "
-        aria-label="Close compose"
-      >
-        <X className="size-4" />
-      </button>
-    </div>
 
-    <div className="mt-5 grid gap-4">
+
+    <div className="mt-2 grid gap-4">
+
       <div className="grid gap-2">
         <label
           htmlFor="compose-to"
@@ -2474,15 +2481,15 @@ async function handleSendMessage() {
           {sendingMessage
             ? 'Sending...'
             : 'Send email'}
-        </button>
+               </button>
       </div>
     </div>
-  </section>
-) : null}
+  </DialogContent>
+</Dialog>
 
-      <div
-        className="
-        grid min-h-[650px] flex-1 overflow-hidden
+<div
+  className="
+    grid min-h-[650px] flex-1 overflow-hidden
         rounded-xl border border-border bg-card
 
         lg:h-[calc(100vh-9rem)]
