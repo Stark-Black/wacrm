@@ -14,6 +14,25 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+
+
+
+
+const SAFE_INLINE_IMAGE_TYPES =
+  new Set([
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/pjpeg',
+    'image/gif',
+    'image/webp',
+    'image/avif',
+    'image/bmp',
+    'image/x-icon',
+    'image/vnd.microsoft.icon',
+  ]);
+
+
 interface GraphAttachment {
   id: string;
   name?: string | null;
@@ -118,6 +137,14 @@ export async function GET(
         .get('attachmentId')
         ?.trim();
 
+    const inlinePreview =
+      request.nextUrl.searchParams
+        .get('inline') === 'true';
+
+    const inlineRequested =
+      request.nextUrl.searchParams
+        .get('inline') === 'true';
+
     if (!messageId || !attachmentId) {
       return NextResponse.json(
         {
@@ -209,6 +236,78 @@ export async function GET(
       );
     }
 
+
+
+
+    const contentType =
+  metadata.contentType
+    ?.trim()
+    .toLowerCase() ||
+  'application/octet-stream';
+
+if (
+  inlinePreview &&
+  (
+    !metadata.isInline ||
+    !SAFE_INLINE_IMAGE_TYPES.has(
+      contentType,
+    )
+  )
+) {
+  return NextResponse.json(
+    {
+      error:
+        'This attachment cannot be displayed as an inline image.',
+    },
+    {
+      status: 400,
+    },
+  );
+}
+
+
+    
+    
+
+
+
+    
+    const normalizedContentType =
+      metadata.contentType
+        ?.split(';')[0]
+        ?.trim()
+        ?.toLowerCase() ||
+      '';
+
+    if (inlineRequested) {
+      const isFileAttachment =
+        graphType.includes(
+          'fileAttachment',
+        );
+
+      const isSafeInlineImage =
+        Boolean(metadata.isInline) &&
+        isFileAttachment &&
+        SAFE_INLINE_IMAGE_TYPES.has(
+          normalizedContentType,
+        );
+
+      if (!isSafeInlineImage) {
+        return NextResponse.json(
+          {
+            error:
+              'This attachment cannot be displayed as an inline image.',
+          },
+          {
+            status: 400,
+          },
+        );
+      }
+    }
+
+
+  
+
     const downloadUrl =
       `${metadataUrl}/$value`;
 
@@ -263,32 +362,74 @@ export async function GET(
       );
 
     const encodedFilename =
-      encodeURIComponent(filename);
+      encodeURIComponent(filename); 
 
-    const contentType =
-      metadata.contentType?.trim() ||
-      downloadResponse.headers.get(
-        'content-type',
-      ) ||
-      'application/octet-stream';
+    const responseContentType =
+      contentType !==
+      'application/octet-stream'
+        ? contentType
+        : downloadResponse.headers.get(
+            'content-type',
+          ) ||
+          'application/octet-stream';
 
     const headers =
       new Headers();
 
     headers.set(
       'Content-Type',
-      contentType,
+      responseContentType,
     );
 
     headers.set(
       'Content-Disposition',
-      `attachment; filename="${filename}"; filename*=UTF-8''${encodedFilename}`,
+      inlineRequested
+        ? `inline; filename="${filename}"; filename*=UTF-8''${encodedFilename}`
+        : `attachment; filename="${filename}"; filename*=UTF-8''${encodedFilename}`,
+    );
+
+    const contentDisposition =
+      inlinePreview
+        ? 'inline'
+        : 'attachment';
+
+    headers.set(
+      'Content-Disposition',
+      `${contentDisposition}; filename="${filename}"; filename*=UTF-8''${encodedFilename}`,
+    );
+
+
+    headers.set(
+      'X-Content-Type-Options',
+      'nosniff',
     );
 
     headers.set(
-      'Cache-Control',
-      'private, no-store, max-age=0',
+      'Cross-Origin-Resource-Policy',
+      'same-origin',
     );
+
+
+    headers.set(
+      'X-Content-Type-Options',
+      'nosniff',
+    );
+
+    headers.set(
+      'Content-Security-Policy',
+      "default-src 'none'; sandbox",
+    );
+
+    headers.set(
+      'Cross-Origin-Resource-Policy',
+      'same-origin',
+    );
+
+    headers.set(
+      'Referrer-Policy',
+      'no-referrer',
+    );
+
 
     const contentLength =
       downloadResponse.headers.get(

@@ -98,7 +98,23 @@ interface EmailMessageDetail
   toRecipients: EmailRecipient[];
   ccRecipients: EmailRecipient[];
   sentDateTime: string | null;
+
   body: string;
+
+  bodyContentType:
+    | 'text'
+    | 'html';
+
+  bodyHtml: string;
+
+  bodyHtmlWithExternalImages:
+    string;
+
+  hasBlockedExternalImages:
+    boolean;
+
+  inlineImageCount: number;
+
   attachments: EmailAttachment[];
 }
 
@@ -235,6 +251,98 @@ function formatFileSize(
       : 1,
   )} ${units[unitIndex]}`;
 }
+
+
+function createEmailHtmlDocument(
+  bodyHtml: string,
+  allowExternalImages: boolean,
+): string {
+  const imagePolicy =
+    allowExternalImages
+      ? "img-src 'self' data: https: http:;"
+      : "img-src 'self' data:;";
+
+  return `
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1"
+        />
+
+        <meta
+          name="referrer"
+          content="no-referrer"
+        />
+
+        <meta
+          http-equiv="Content-Security-Policy"
+          content="
+            default-src 'none';
+            ${imagePolicy}
+            style-src 'unsafe-inline';
+            font-src 'none';
+            media-src 'none';
+            object-src 'none';
+            frame-src 'none';
+            connect-src 'none';
+            form-action 'none';
+                       font-src 'none';
+            media-src 'none';
+            object base-uri 'none';
+          "
+        />
+
+        <style>
+          html {
+            color-scheme: light;
+            background: #ffffff;
+          }
+
+          body {
+            margin: 0;
+            padding: 18px;
+            background: #ffffff;
+            color: #111827;
+            font-family:
+              Arial,
+              Helvetica,
+              sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-wrap: anywhere;
+          }
+
+          img {
+            max-width: 100%;
+            height: auto;
+          }
+
+          table {
+            max-width: 100%;
+          }
+
+          a {
+            color: #2563eb;
+          }
+
+          pre {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+          }
+        </style>
+      </head>
+
+      <body>
+        ${bodyHtml}
+      </body>
+    </html>
+  `;
+}
+
 
 function isMicrosoftCloudFileUrl(
   value: string,
@@ -655,10 +763,27 @@ export default function EmailInboxPage() {
     null,
   );
 
+  const [
+  showExternalImages,
+  setShowExternalImages,
+] = useState(false);
+
+
+
+
 const [
   loadingMessage,
   setLoadingMessage,
 ] = useState(false);
+
+
+const [
+  allowExternalEmailImages,
+  setAllowExternalEmailImages,
+] = useState(false);
+
+
+
 
 const [
   messageError,
@@ -1000,12 +1125,17 @@ const [
 
 
 useEffect(() => {
+  setShowExternalImages(false);
+
   setReplyOpen(false);
   setReplyText('');
 
   setForwardOpen(false);
   setForwardTo('');
   setForwardComment('');
+
+
+  setAllowExternalEmailImages(false);
 }, [selectedMessageId]);
 
   const filteredMessages =
@@ -1041,6 +1171,11 @@ useEffect(() => {
         message.id === selectedMessageId,
     ) ?? null;
 
+
+
+
+
+
   const selectedMessageBody =
   selectedMessageDetail?.body ||
   selectedMessage?.preview ||
@@ -1054,6 +1189,57 @@ useEffect(() => {
       ),
     [selectedMessageBody],
   );
+
+
+
+  const emailHtmlDocument =
+  useMemo(() => {
+    if (
+      selectedMessageDetail
+        ?.bodyContentType !== 'html'
+    ) {
+      return '';
+    }
+
+    const selectedHtml =
+      allowExternalEmailImages
+        ? selectedMessageDetail
+            .bodyHtmlWithExternalImages
+        : selectedMessageDetail
+            .bodyHtml;
+
+    if (!selectedHtml?.trim()) {
+      return '';
+    }
+
+    return createEmailHtmlDocument(
+      selectedHtml,
+      allowExternalEmailImages,
+    );
+  }, [
+    selectedMessageDetail,
+    allowExternalEmailImages,
+  ]);
+
+
+
+  const hasHtmlMessageBody =
+  selectedMessageDetail
+    ?.bodyContentType === 'html' &&
+  Boolean(
+    selectedMessageDetail.bodyHtml,
+  );
+
+  const selectedMessageHtml =
+  showExternalImages
+    ? selectedMessageDetail
+        ?.bodyHtmlWithExternalImages ||
+      selectedMessageDetail
+        ?.bodyHtml ||
+      ''
+    : selectedMessageDetail
+        ?.bodyHtml ||
+      '';
 
 
 async function handleSendReply() {
@@ -2153,9 +2339,13 @@ async function handleSendMessage() {
 
       <div
         className="
-          grid min-h-[650px] flex-1 overflow-hidden
-          rounded-xl border border-border bg-card
-          lg:grid-cols-[210px_360px_minmax(0,1fr)]
+        grid min-h-[650px] flex-1 overflow-hidden
+        rounded-xl border border-border bg-card
+
+        lg:h-[calc(100vh-9rem)]
+        lg:min-h-0
+        lg:flex-none
+        lg:grid-cols-[210px_360px_minmax(0,1fr)]
         "
       >
         <aside className="border-b border-border p-3 lg:border-r lg:border-b-0">
@@ -2463,43 +2653,49 @@ async function handleSendMessage() {
           </div>
         </section>
 
-        <section className="hidden min-w-0 lg:flex lg:flex-col">
-  {selectedMessage ? (
-    <>
-      <div className="border-b border-border p-6">
-        <div className="flex items-start gap-4">
-          <div
-            className="
-              flex size-10 shrink-0
-              items-center justify-center
-              rounded-full bg-primary/10
-              text-primary
-            "
-          >
-            <Mail className="size-5" />
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold text-foreground">
-              {selectedMessage.subject}
-            </h2>
-
-            <div className="mt-3 flex flex-col gap-1 text-sm">
-              <p className="font-medium text-foreground">
-                {selectedMessage.fromName}
-              </p>
-
-              <p className="text-muted-foreground">
-                {selectedMessage.fromAddress}
-              </p>
-
-              <p className="text-xs text-muted-foreground">
-                {formatFullDate(
-                  selectedMessage.receivedDateTime,
-                )}
-              </p>
+        <section
+  className="
+    hidden min-h-0 min-w-0
+    overflow-hidden
+    lg:flex lg:flex-col
+  "
+>
+    {selectedMessage ? (
+      <>
+        <div className="border-b border-border p-6">
+          <div className="flex items-start gap-4">
+            <div
+              className="
+                flex size-10 shrink-0
+                items-center justify-center
+                rounded-full bg-primary/10
+                text-primary
+              "
+            >
+              <Mail className="size-5" />
             </div>
-          </div>
+
+            <div className="min-w-0 flex-1">
+              <h2 className="text-lg font-semibold text-foreground">
+                {selectedMessage.subject}
+              </h2>
+
+              <div className="mt-3 flex flex-col gap-1 text-sm">
+                <p className="font-medium text-foreground">
+                  {selectedMessage.fromName}
+                </p>
+
+                <p className="text-muted-foreground">
+                  {selectedMessage.fromAddress}
+                </p>
+
+                <p className="text-xs text-muted-foreground">
+                  {formatFullDate(
+                    selectedMessage.receivedDateTime,
+                  )}
+                </p>
+              </div>
+            </div>
 
           <div className="flex shrink-0 items-center gap-2">
   {selectedMessage.hasAttachments ? (
@@ -2627,7 +2823,14 @@ async function handleSendMessage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div
+        className="
+          min-h-0 flex-1
+          overflow-y-auto
+          overscroll-contain
+          p-6
+        "
+        >
         {loadingMessage ? (
           <div className="flex min-h-[300px] items-center justify-center">
             <div className="text-center">
@@ -3155,7 +3358,8 @@ async function handleSendMessage() {
   </div>
 ) : null}
 
-{displayedMessageContent
+{!hasHtmlMessageBody &&
+displayedMessageContent
   .cloudLinks.length > 0 ? (
   <div className="mb-6">
     <div className="mb-3 flex items-center gap-2">
@@ -3245,8 +3449,9 @@ async function handleSendMessage() {
   </div>
 ) : null}
 
-{displayedMessageContent
-  .externalLinks.length > 0 ? (
+{!hasHtmlMessageBody &&
+  displayedMessageContent
+    .externalLinks.length > 0 ? (
   <div className="mb-6">
     <div className="mb-3 flex items-center gap-2">
       <ExternalLink className="size-4 text-muted-foreground" />
@@ -3307,8 +3512,172 @@ async function handleSendMessage() {
 
 
 
-{displayedMessageContent
-  .cleanBody ? (
+{hasHtmlMessageBody ? (
+  <div className="grid gap-4">
+    {selectedMessageDetail
+      ?.hasBlockedExternalImages &&
+    !showExternalImages ? (
+      <div
+        className="
+          flex flex-col gap-3
+          rounded-lg border
+          border-amber-500/30
+          bg-amber-500/10 p-4
+          sm:flex-row
+          sm:items-center
+          sm:justify-between
+        "
+      >
+        <div>
+          <p className="text-sm font-medium text-foreground">
+            External images were blocked
+          </p>
+
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Loading them may notify the sender that you opened this email.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() =>
+            setShowExternalImages(
+              true,
+            )
+          }
+          className="
+            inline-flex h-9
+            shrink-0 items-center
+            justify-center gap-2
+            rounded-md border
+            border-border
+            bg-background px-4
+            text-sm font-medium
+            text-foreground
+            transition-colors
+            hover:bg-muted
+          "
+        >
+          <ExternalLink className="size-4" />
+          Load images
+        </button>
+      </div>
+    ) : null}
+
+    <div
+  className="
+    max-w-full overflow-x-auto
+    rounded-lg border
+    border-border
+    bg-card
+  "
+>
+      <div
+      className="
+      min-w-0 p-4
+      text-foreground
+
+      [&_*]:text-inherit
+
+      [&_a]:!text-foreground
+      dark:[&_a]:!text-white
+      [&_a]:break-words
+      [&_a]:underline-offset-4
+      hover:[&_a]:underline
+
+      [&_img]:h-auto
+      [&_img]:max-w-full
+
+      [&_table]:max-w-full
+      [&_table]:text-inherit
+
+      [&_td]:border-border
+      [&_th]:border-border
+      [&_hr]:border-border
+      "
+      dangerouslySetInnerHTML={{
+        __html: selectedMessageHtml,
+      }}
+    />
+    </div>
+  </div>
+) : emailHtmlDocument ? (
+  <div className="space-y-3">
+    {selectedMessageDetail
+      ?.hasBlockedExternalImages ? (
+      <div
+        className="
+          flex flex-col gap-3
+          rounded-lg border
+          border-amber-300
+          bg-amber-50 p-3
+          text-sm text-amber-950
+          sm:flex-row
+          sm:items-center
+          sm:justify-between
+        "
+      >
+        <div>
+          <p className="font-medium">
+            External images are blocked
+          </p>
+
+          <p className="mt-0.5 text-xs leading-relaxed">
+            Loading them may notify the
+            sender that you opened this
+            email.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() =>
+            setAllowExternalEmailImages(
+              (current) => !current,
+            )
+          }
+          className="
+            inline-flex h-9 shrink-0
+            items-center justify-center
+            rounded-md border
+            border-amber-400
+            bg-white px-3
+            text-sm font-medium
+            text-amber-950
+            transition-colors
+            hover:bg-amber-100
+          "
+        >
+          {allowExternalEmailImages
+            ? 'Hide external images'
+            : 'Load external images'}
+        </button>
+      </div>
+    ) : null}
+
+    <iframe
+      key={`${selectedMessageId}-${allowExternalEmailImages}`}
+      title={
+        selectedMessageDetail?.subject
+          ? `Email: ${selectedMessageDetail.subject}`
+          : 'Email content'
+      }
+      srcDoc={emailHtmlDocument}
+      sandbox="
+        allow-same-origin
+        allow-popups
+        allow-popups-to-escape-sandbox
+      "
+      referrerPolicy="no-referrer"
+      className="
+        min-h-[560px] w-full
+        rounded-lg border
+        border-border bg-white
+      "
+    />
+  </div>
+) : displayedMessageContent
+    .cleanBody ? (
   <div
     className="
       whitespace-pre-wrap
@@ -3323,7 +3692,9 @@ async function handleSendMessage() {
     }
   </div>
 ) : displayedMessageContent
-    .cloudLinks.length === 0 ? (
+      .cloudLinks.length === 0 &&
+    displayedMessageContent
+      .externalLinks.length === 0 ? (
   <div className="text-sm text-muted-foreground">
     No message content is available.
   </div>
